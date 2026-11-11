@@ -139,3 +139,27 @@ button { font: inherit; touch-action: manipulation; cursor: pointer; }
   .overlay ul { font-size: 12.5px; } .overlay h1 { font-size: 20px; }
   #treat-btn { width: 60px; height: 60px; } #score-pill { font-size: 17px; }
 }
+
+/* ---------- v3: independent cats + audio panel ---------- */
+.door .faces { display: flex; margin-left: 2px; }
+.door .faces:empty { display: none; }
+.door .faces img { width: 26px; height: 26px; border-radius: 50%; border: 2px solid #fff; margin-left: -6px; object-fit: cover; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.door .faces img:first-child { margin-left: 0; }
+.cat-btn { position: relative; }
+.cat-btn .where {
+  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+  font-style: normal; font-size: 10px; background: rgba(30,18,10,.85); color: #ffe9a0;
+  border: 1px solid #ffd84a; border-radius: 999px; padding: 1px 6px; white-space: nowrap;
+}
+.cat-btn .where:empty { display: none; }
+.cat-btn:not(.active) img { opacity: .92; }
+#audio-panel {
+  position: absolute; right: calc(10px + env(safe-area-inset-right)); top: calc(62px + env(safe-area-inset-top));
+  z-index: 6; width: 200px; background: rgba(30,18,10,.94); border: 2px solid #ffd84a; border-radius: 16px;
+  padding: 10px 12px; box-shadow: 0 6px 20px rgba(0,0,0,.5); font-size: 15px; color: #fff;
+}
+#audio-panel[hidden] { display: none; }
+#audio-panel .row { display: flex; align-items: center; gap: 8px; font-weight: bold; margin: 2px 0; }
+#audio-panel input[type=checkbox] { width: 22px; height: 22px; accent-color: #ff8c3c; }
+#audio-panel input[type=range] { width: 100%; accent-color: #ffd84a; margin: 2px 0 8px; height: 26px; }
+#audio-panel .note { margin: 0; font-size: 11px; color: #d8c8a8; }

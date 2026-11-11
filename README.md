@@ -1,4 +1,4 @@
-# Ollie & Stanley (v1)
+# Ollie & Stanley (v3)
 
 A tap-to-walk web game set in the family's real downstairs, starring cat brothers
 Ollie and Stanley. Plain HTML/CSS/JS: no build step and no CDNs. It works offline
@@ -12,6 +12,25 @@ Chrome: menu > Add to Home screen / Install app).
 * Orange arrow buttons go to the next room; both cats come along.
 * When you're not controlling Stanley, he sometimes hisses and chases Ollie. Ollie runs away, and if Stanley catches him there's a quick scuffle.
 * Speaker button (top-right) turns the synthesized sound effects on. Sound starts off.
+
+## v3 (part A)
+
+- **Each cat lives its own life.** Only the selected cat goes through a door; the other stays put and
+  wanders, naps, hunts critters, steals snacks and plays with things on its own. Stanley sometimes
+  roams the house looking for Ollie (and may chase her once he finds her). Door buttons show a small
+  face badge pointing toward the other cat; the face buttons show which room each cat is in, and
+  tapping the other cat's face switches the view to its room. Chases only happen when both cats are
+  in the room you're looking at.
+- **Things to tap** (with a cat selected; sparkles hint where): sofa / loveseat (seat or back, kneads,
+  curls up), coffee table, window sill (sunny: double nap points), kitchen bench, dining chair,
+  bench and table, the stairs (sit on a step), cat tree (+5), rug (walk on, then tap your cat to
+  roll), toy mice (+1), cups/glasses (crash, -5) and the couch arm (scratch, -5). Tap the floor to
+  hop down. All zones are data in `js/config.js` -> `rooms.<id>.objects`.
+- **Audio** (`js/audio.js`, all synthesized live, nothing downloaded): an original slow lullaby loop
+  and cat voices made with formant synthesis (Stanley's are lower and grumpier). The speaker button
+  opens Music / Sounds toggles with volume sliders (saved on the phone). On iPhone the silent switch
+  mutes the game (audio session "ambient").
+- Test switches: `noroam=1`, `noaiobj=1`, `nohunt=1`, `roam=N` (seconds between roam checks).
 
 ## v2 gameplay
 * **Score** (top centre) with +N / -N popups; best score is saved on the device.

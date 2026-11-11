@@ -77,7 +77,17 @@ window.GAME_CONFIG = {
     ]
   },
   treat: { cooldown: 20 },
-  nap: { after: 18 },     // idle seconds before a cat curls up
+  /* v3: points for object play ("mischief" costs points) */
+  objectPoints: { cup: -5, couch: -5, tree: 5, toy: 1 },
+  cupRespawn: 30,            // seconds until a knocked-over cup is back
+  roam: {                    // AI cats moving between rooms on their own
+    every: [15, 35],         // seconds between "should I go somewhere?" checks
+    stanleySeeksOllie: 0.6,  // chance Stanley heads toward Ollie's room
+    wander: 0.25             // chance of wandering to a random next room
+  },
+  aiObjectChance: 0.25,      // idle AI cat picks an object to play with
+  audio: { music: 0.35, effects: 0.8 },
+  nap: { after: 18, sunAfter: 1.5 },  // idle seconds before a cat curls up (sun spots: almost right away)
   round: { seconds: 180 },
 
   ai: {
@@ -108,6 +118,9 @@ window.GAME_CONFIG = {
       floor: [[0.19,0.50],[0.44,0.50],[0.47,0.47],[0.64,0.47],[0.64,0.60],[0.72,0.74],[0.75,0.86],[0.75,0.99],[0.20,0.99],[0.19,0.80]],
       depth: { y1: 0.50, s1: 0.10, y2: 1.0, s2: 0.22 },
       spawn: [0.45, 0.85],
+      objects: [
+        { id: "toy-hall", type: "toy", name: "toy mouse", x: 0.36, y: 0.80 }
+      ],
       doors: [
         { to: "living", x: 0.42, y: 0.42, arrow: "up", floor: [0.43, 0.55] }
       ]
@@ -118,6 +131,27 @@ window.GAME_CONFIG = {
       floor: [[0.16,0.50],[0.25,0.50],[0.26,0.67],[0.43,0.67],[0.50,0.57],[0.56,0.54],[0.57,0.70],[0.80,0.71],[0.80,0.99],[0.17,0.99],[0.16,0.86]],
       depth: { y1: 0.53, s1: 0.08, y2: 1.0, s2: 0.23 },
       spawn: [0.5, 0.85],
+      /*
+       * Interactive objects (v3). type: cup | couch | tree | sun | toy
+       *   x,y   where it is in the photo; from = floor spot the cat uses
+       *   r     tap radius (fraction of photo height); rect = [x0,y0,x1,y1] tap area
+       *   catScale / sortY: cat size + draw order when up on the object
+       */
+      objects: [
+        /* seat: hop up and sit / knead / curl up. spots = [x, y(feet), cat size up there]; nearest to the tap wins */
+        { id: "couch", type: "couch", name: "couch arm", rect: [0.565,0.50,0.625,0.69], from: [0.60, 0.74] },
+        { id: "loveseat", type: "seat", name: "loveseat", rect: [0.57,0.29,0.83,0.69], from: [0.68, 0.75], sortY: 0.70, knead: true,
+          spots: [[0.655, 0.50, 0.125], [0.745, 0.495, 0.12], [0.73, 0.325, 0.105]] },
+        { id: "sofa", type: "seat", name: "sofa", rect: [0.265,0.25,0.535,0.47], from: [0.525, 0.59], sortY: 0.475, knead: true,
+          spots: [[0.33, 0.405, 0.07], [0.46, 0.405, 0.07], [0.40, 0.27, 0.062]] },
+        { id: "coffee-table", type: "seat", name: "coffee table", rect: [0.26,0.45,0.445,0.55], from: [0.45, 0.68], sortY: 0.535,
+          spots: [[0.33, 0.50, 0.085], [0.40, 0.50, 0.085]] },
+        { id: "sill-living", type: "seat", name: "window sill", rect: [0.11,0.18,0.23,0.30], from: [0.205, 0.56], sortY: 0.30, sun: true,
+          spots: [[0.17, 0.285, 0.06]] },
+        { id: "rug", type: "rug", name: "rug", rect: [0.19,0.53,0.535,0.75] },
+        { id: "sun-living", type: "sun", name: "sunny spot", x: 0.215, y: 0.59, rx: 0.06, ry: 0.04 },
+        { id: "toy-living", type: "toy", name: "toy mouse", x: 0.46, y: 0.82 }
+      ],
       doors: [
         { to: "hallway", x: 0.50, y: 0.92, arrow: "down", floor: [0.50, 0.93] },
         { to: "stairway", x: 0.06, y: 0.62, arrow: "left", floor: [0.20, 0.88] },
@@ -130,6 +164,10 @@ window.GAME_CONFIG = {
       floor: [[0.71,0.58],[0.82,0.54],[0.97,0.52],[0.96,0.70],[0.94,0.86],[0.99,0.99],[0.70,0.99]],
       depth: { y1: 0.55, s1: 0.10, y2: 1.0, s2: 0.24 },
       spawn: [0.84, 0.75],
+      objects: [
+        { id: "stairs", type: "seat", name: "stairs", rect: [0.03,0.30,0.50,0.99], from: [0.73, 0.90], sortY: 0.99,
+          spots: [[0.30, 0.585, 0.14], [0.32, 0.70, 0.165], [0.33, 0.83, 0.19]] }
+      ],
       doors: [
         { to: "living", x: 0.93, y: 0.40, arrow: "right", floor: [0.90, 0.60] }
       ],
@@ -146,6 +184,12 @@ window.GAME_CONFIG = {
       // Counter/table tops where snacks can appear; "from" = floor spot cats jump from.
       surfaces: [
         { name: "island", poly: [[0.50,0.395],[0.65,0.405],[0.65,0.435],[0.50,0.43]], from: [0.66, 0.86], size: 0.055 }
+      ],
+      objects: [
+        { id: "cup-kitchen", type: "cup", name: "mug", x: 0.155, y: 0.39, from: [0.07, 0.70], size: 0.045 },
+        { id: "bench-kitchen", type: "seat", name: "bench", rect: [0.13,0.47,0.565,0.60], from: [0.40, 0.87], sortY: 0.86,
+          spots: [[0.22, 0.545, 0.16], [0.35, 0.55, 0.16], [0.48, 0.555, 0.16]] },
+        { id: "toy-kitchen", type: "toy", name: "toy mouse", x: 0.42, y: 0.90 }
       ],
       doors: [
         { to: "living", x: 0.30, y: 0.93, arrow: "down", floor: [0.30, 0.95] },
@@ -164,6 +208,11 @@ window.GAME_CONFIG = {
       surfaces: [
         { name: "counter", poly: [[0.665,0.36],[0.73,0.36],[0.75,0.405],[0.69,0.405]], from: [0.55, 0.72], size: 0.07 }
       ],
+      objects: [
+        { id: "cup-walkway", type: "cup", name: "glass", x: 0.795, y: 0.425, from: [0.57, 0.76], size: 0.06, glass: true },
+        { id: "chair-walkway", type: "seat", name: "dining chair", rect: [0.37,0.22,0.47,0.46], from: [0.42, 0.52], sortY: 0.47,
+          spots: [[0.425, 0.405, 0.07]] }
+      ],
       doors: [
         { to: "dining", x: 0.43, y: 0.36, arrow: "up", floor: [0.44, 0.50] },
         { to: "kitchen", x: 0.48, y: 0.93, arrow: "down", floor: [0.47, 0.94] }
@@ -177,6 +226,17 @@ window.GAME_CONFIG = {
       spawn: [0.45, 0.92],
       surfaces: [
         { name: "table", poly: [[0.20,0.43],[0.35,0.40],[0.65,0.43],[0.72,0.50],[0.45,0.53],[0.18,0.52]], from: [0.40, 0.88], size: 0.07 }
+      ],
+      objects: [
+        { id: "tree", type: "tree", name: "cat tree", rect: [0.15,0.0,0.31,0.40], x: 0.27, y: 0.195, from: [0.22, 0.90], catScale: 0.10, sortY: 0.40 },
+        { id: "cup-dining", type: "cup", name: "glass", x: 0.62, y: 0.47, from: [0.62, 0.88], size: 0.06, glass: true },
+        { id: "sun-dining", type: "sun", name: "sunny spot", x: 0.62, y: 0.93, rx: 0.07, ry: 0.035 },
+        { id: "chair-dining", type: "seat", name: "chair", rect: [0.76,0.36,0.95,0.80], from: [0.86, 0.86], sortY: 0.80,
+          spots: [[0.835, 0.665, 0.16]] },
+        { id: "bench-dining", type: "seat", name: "bench", rect: [0.10,0.62,0.74,0.76], from: [0.42, 0.88], sortY: 0.79,
+          spots: [[0.24, 0.70, 0.17], [0.42, 0.705, 0.17], [0.60, 0.71, 0.17]] },
+        { id: "table-dining", type: "seat", name: "table", rect: [0.07,0.36,0.78,0.62], from: [0.40, 0.88], sortY: 0.785,
+          spots: [[0.30, 0.47, 0.12], [0.50, 0.49, 0.12]] }
       ],
       doors: [
         { to: "kitchen", x: 0.09, y: 0.62, arrow: "left", floor: [0.22, 0.92] }

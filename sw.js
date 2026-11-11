@@ -1,8 +1,8 @@
 /* Offline cache. Bump CACHE when files change so phones pick up the update. */
-const CACHE = "catgame-v2-1";
+const CACHE = "catgame-v3-1";
 const CORE = [
   "./", "./index.html", "./manifest.json", "./css/style.css",
-  "./js/config.js", "./js/game.js",
+  "./js/config.js", "./js/audio.js", "./js/game.js",
   "./js/sprites.js",
   "./assets/cats/stanley-face.png", "./assets/cats/ollie-face.png",
   "./assets/icons/icon-192.png", "./assets/icons/icon-512.png",
