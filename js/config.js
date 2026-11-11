@@ -86,6 +86,18 @@ window.GAME_CONFIG = {
     wander: 0.25             // chance of wandering to a random next room
   },
   aiObjectChance: 0.25,      // idle AI cat picks an object to play with
+  camera: { zoom: 1.15, follow: 2.5 },  // room drawn a bit larger than the screen; pans to keep your cat centered
+  /* House player (game master): tools with cooldowns (cd, seconds) or charges that recharge */
+  house: {
+    tools: {
+      treat:  { icon: "\uD83C\uDF6A", label: "Treat",  cd: 8 },
+      spider: { icon: "\uD83D\uDD77\uFE0F", label: "Spider", charges: 3, recharge: 20 },
+      mouse:  { icon: "\uD83D\uDC2D", label: "Mouse",  charges: 2, recharge: 30 },
+      snack:  { icon: "\uD83D\uDC1F", label: "Snack",  charges: 1, recharge: 30 },
+      toy:    { icon: "\uD83E\uDDF8", label: "Toy",    cd: 4 }
+    },
+    points: { treat: 3, critterFast: 10, snack: 5, toy: 1 }   // critter: 10 if caught at once, -1 per 3 s (min 2)
+  },
   audio: { music: 0.35, effects: 0.8 },
   nap: { after: 18, sunAfter: 1.5 },  // idle seconds before a cat curls up (sun spots: almost right away)
   round: { seconds: 180 },

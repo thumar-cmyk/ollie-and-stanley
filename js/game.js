@@ -51,7 +51,14 @@
       var cand = [best[0] + (c[0] - best[0]) * t, best[1] + (c[1] - best[1]) * t];
       if (inPoly(cand, poly)) return cand;
     }
-    return c;
+    // concave floor (centroid outside it): look around the nearest edge point instead
+    for (var rr = 0.004; rr <= 0.05; rr += 0.004) {
+      for (var a = 0; a < 16; a++) {
+        var cand2 = [best[0] + Math.cos(a * Math.PI / 8) * rr, best[1] + Math.sin(a * Math.PI / 8) * rr];
+        if (inPoly(cand2, poly)) return cand2;
+      }
+    }
+    return best;
   }
   function segInside(a, b, poly) {
     var n = Math.max(4, Math.ceil(dist(a, b) / 0.01));
@@ -136,6 +143,9 @@
   function newCatStats() { var o = {}; Object.keys(C.cats).forEach(function (id) { o[id] = { critters: 0, nap: 0 }; }); return o; }
   state.stats = newStats();
   state.catStats = newCatStats();
+  state.controlled = {};        // multiplayer: role -> who holds it
+  state.role = "cat";           // this phone: "cat" or "house"
+  var net = { on: false, role: null, peer: null, conn: null, conns: [], code: null, seq: 0, events: [], lastSeq: 0, myRole: null, cid: null, lostAt: 0 };
 
   var useSmall = Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1) < 1500;
   var imgDir = "assets/rooms/" + (params.get("res") || (useSmall ? "1280" : "1920")) + "/";
@@ -170,6 +180,11 @@
   var catIds = Object.keys(cats);
   function other(id) { return catIds.filter(function (c) { return c !== id; })[0]; }
   function room() { return rooms[state.room]; }
+  // Is a person steering this cat? (single player: the selected cat; multiplayer: a phone holds that role)
+  function isPlayer(c) {
+    if (net.on) return !!state.controlled[c.id];
+    return !state.houseMode && c.id === state.selected;
+  }
   function R(cat) { return rooms[cat.room]; }
   function visible(cat) { return cat.room === state.room; }
   function depthScale(y, r) {
@@ -190,6 +205,7 @@
     void scoreEl.parentNode.offsetWidth;
     scoreEl.parentNode.classList.add(n >= 0 ? "bump" : "bump-neg");
     var txt = (n >= 0 ? "+" : "") + n + (label ? " " + label : "");
+    if (at) netEvent({ k: "pop", x: at[0], y: at[1], text: txt, good: n >= 0, room: roomId || state.room });
     if (at && (!roomId || roomId === state.room)) state.popups.push({ x: at[0], y: at[1], text: txt, good: n >= 0, t: 0 });
     else if (at && roomId) showWarn(txt + " (" + rooms[roomId].name + ")", 2.2);
   }
@@ -203,9 +219,8 @@
     view.w = w; view.h = h; view.dpr = dpr;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     canvas.style.width = w + "px"; canvas.style.height = h + "px";
-    var ar = 16 / 9;
-    if (w / h > ar) { view.ih = h; view.iw = h * ar; } else { view.iw = w; view.ih = w / ar; }
-    view.ix = (w - view.iw) / 2; view.iy = (h - view.ih) / 2;
+    if (typeof applyCamera === "function" && cam) applyCamera();
+    else { var ar = 16 / 9; if (w / h > ar) { view.ih = h; view.iw = h * ar; } else { view.iw = w; view.ih = w / ar; } view.ix = (w - view.iw) / 2; view.iy = (h - view.ih) / 2; }
     placeHotspots();
   }
   function toScreen(p) { return [view.ix + p[0] * view.iw, view.iy + p[1] * view.ih]; }
@@ -223,7 +238,7 @@
       b.dataset.x = d.x; b.dataset.y = d.y;
       b.innerHTML = '<span class="arr">' + ARROWS[d.arrow] + '</span><span class="lbl">' + rooms[d.to].name + '</span><span class="badge"></span><span class="faces"></span>';
       b.setAttribute("aria-label", "Go to " + rooms[d.to].name);
-      b.addEventListener("click", function (e) { e.stopPropagation(); unlockAudio(); goTo(d); });
+      b.addEventListener("click", function (e) { e.stopPropagation(); unlockAudio(); doorTap(d); });
       hotLayer.appendChild(b);
     });
     (r.hints || []).forEach(function (h) {
@@ -241,6 +256,9 @@
   function placeHotspots() {
     Array.prototype.forEach.call(hotLayer.children, function (b) {
       var p = toScreen([+b.dataset.x, +b.dataset.y]);
+      // keep door buttons on screen while the camera pans
+      var mx = Math.min(view.w / 2, (b.offsetWidth || 120) / 2 + 6), my = Math.min(view.h / 2, (b.offsetHeight || 40) / 2 + 6);
+      p[0] = Math.max(mx, Math.min(view.w - mx, p[0])); p[1] = Math.max(my, Math.min(view.h - my, p[1]));
       b.style.left = p[0] + "px"; b.style.top = p[1] + "px";
     });
   }
@@ -333,7 +351,9 @@
     var here = state.critters.filter(function (k) { return k.room === roomId; });
     showToast(toastText || (r.name + (here.length ? "  \u2014  " + (here[0].type === "spider" ? "a spider!" : "a mouse!") : "")));
     (r.doors || []).forEach(function (d) { loadImg(imgDir + rooms[d.to].image); });
-    if (state.treat && state.treat.room !== roomId) state.treat = null;
+    if (state.treat && state.treat.room !== roomId && !net.on) state.treat = null;
+    if (typeof updateCamera === "function") updateCamera(0, true);
+    lastMapKey = "";
   }
   function enterRoom(id, fromId) {
     var sel = cats[state.selected];
@@ -343,9 +363,58 @@
     if (oth.room === id) say(oth, oth.id === "stanley" ? "Hmm?" : "Mrrp!", 1);
     state.chaseTimer = Math.max(state.chaseTimer, 3);
   }
+  /* ---------- room transitions: a "walk through the doorway" dolly ----------
+   * Push the camera into the doorway, dip, then pull back out of the matching
+   * doorway in the next room. Falls back to a plain fade (?nodolly=1 or
+   * prefers-reduced-motion, or when the rooms aren't joined by a door). */
+  var dolly = null;
+  var reduceMotion = params.get("nodolly") === "1" || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  function easeIO(u) { return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; }
+  function dollyU() { return dolly ? easeIO(Math.min(1, dolly.t / dolly.dur)) : 0; }
+  function dollyZoom() { if (!dolly) return 1; var u = dollyU(); return dolly.phase === "in" ? 1 + 0.9 * u : 1 + 0.75 * (1 - u); }
+  function dollyCenter(cx, cy) {
+    if (!dolly) return [cx, cy];
+    var u = dollyU(), k = dolly.phase === "in" ? u : 1 - u;
+    return [cx + (dolly.x - cx) * k, cy + (dolly.y - cy) * k];
+  }
+  function startDolly(phase, x, y, dur, cb) {
+    dolly = { phase: phase, x: x, y: y, t: 0, dur: dur, cb: cb, dipped: false };
+    hotLayer.style.opacity = "0";
+  }
+  function updateDolly(dt) {
+    if (!dolly) return;
+    dolly.t += dt;
+    if (dolly.phase === "in" && !dolly.dipped && dolly.t > dolly.dur * 0.45) { dolly.dipped = true; fadeEl.classList.add("on"); }
+    applyCamera();
+    if (dolly.t >= dolly.dur) {
+      var cb = dolly.cb; dolly = null;
+      if (cb) cb();
+      if (!dolly) { hotLayer.style.opacity = ""; applyCamera(); placeHotspots(); }
+    }
+  }
+  function doorBetween(a, b) { return ((rooms[a] && rooms[a].doors) || []).filter(function (d) { return d.to === b; })[0]; }
+  // Dolly from the current view into roomId through the connecting door.
+  function dollyToView(roomId, before, after) {
+    var fromId = state.room, din = doorBetween(fromId, roomId);
+    var im = loadImg(imgDir + rooms[roomId].image);
+    startDolly("in", din.x, din.y, 0.45, function () {
+      var go = function () {
+        if (before) before(); else setView(roomId);
+        var back = doorBetween(roomId, fromId);
+        startDolly("out", back ? back.x : 0.5, back ? back.y : 0.5, 0.55, function () { state.transitioning = false; if (after) after(); });
+        fadeEl.classList.remove("on");
+      };
+      if (im.complete) go(); else { im.onload = go; im.onerror = go; }
+    });
+  }
   // Fade the view over to another room (e.g. when picking the other cat).
   function fadeToView(roomId, cb) {
     if (state.transitioning) return;
+    if (!reduceMotion && roomId !== state.room && doorBetween(state.room, roomId)) {
+      state.transitioning = true;
+      dollyToView(roomId, null, cb);
+      return;
+    }
     state.transitioning = true;
     fadeEl.classList.add("on");
     setTimeout(function () {
@@ -369,6 +438,7 @@
     var from = state.room;
     var wait = Math.min(1100, 200 + dist([sel.x, sel.y], target) / sel.cfg.speed * 1000);
     setTimeout(function () {
+      if (!reduceMotion) { dollyToView(door.to, function () { enterRoom(door.to, from); }); return; }
       fadeEl.classList.add("on");
       setTimeout(function () {
         var go = function () {
@@ -393,12 +463,12 @@
     if (visible(cat)) {
       showWarn(cat.cfg.name + " came in!", 1.8);
       say(cat, cat.id === "stanley" ? "\uD83D\uDE3C" : "Mrrp!", 1.2);
-      if (cat.id === "stanley" && state.selected === "ollie") state.chaseTimer = Math.min(state.chaseTimer, rnd(2, 5));
+      if (cat.id === "stanley" && !isPlayer(cat)) state.chaseTimer = Math.min(state.chaseTimer, rnd(2, 5));
     } else if (wasVisible) showWarn(cat.cfg.name + " wandered off to the " + rooms[door.to].name, 2);
     lastBadgeKey = "";
   }
   function updateRoam(cat, dt) {
-    if (cat.id === state.selected || cat.mode !== "idle" || busy(cat) || cat.path.length) return;
+    if (isPlayer(cat) || cat.mode !== "idle" || busy(cat) || cat.path.length) return;
     cat.roamT -= dt;
     if (cat.roamT > 0) return;
     var RM = C.roam;
@@ -463,7 +533,7 @@
       if (st.mode !== "chase") return;
       say(ol, "Mrow!", 1.4);
       sfx("meow");
-      if (state.selected !== "ollie") walkTo(ol, farPointFrom([st.x, st.y], R(ol)), "flee", ol.cfg.fleeSpeed / ol.cfg.speed);
+      if (!isPlayer(ol)) walkTo(ol, farPointFrom([st.x, st.y], R(ol)), "flee", ol.cfg.fleeSpeed / ol.cfg.speed);
     }, 250);
     return true;
   }
@@ -494,7 +564,7 @@
       return;
     }
     if (st.mode === "scuffle") return;
-    if (state.selected === "stanley") return;
+    if (isPlayer(st)) return;
     if (st.mode !== "idle" || busy(st) || ol.mode === "flee" || busy(ol)) return;
     if (st.room !== ol.room || st.room !== state.room) return;
     if (state.snack || state.treat) return; // he's distracted
@@ -602,7 +672,7 @@
       if (k.caught || k.drop > 0.15) return;
       // AI cats notice critters in their room after a few seconds and hunt them
       catsIn(k.room).forEach(function (c) {
-        if (c.id === state.selected || c.mode === "nap" && k.t < 15) return;
+        if (isPlayer(c) || c.mode === "nap" && k.t < 15) return;
         if (busy(c) || c.mode === "chase" || c.mode === "flee") return;
         if (c.mode === "hunt") {
           c.huntT = (c.huntT || 0) - dt;
@@ -635,8 +705,9 @@
     if (k.type === "spider") state.stats.spiders++; else state.stats.mice++;
     state.catStats[cat.id].critters++;
     say(cat, k.type === "spider" ? "Got it!" : "Gotcha!", 1.2);
-    addScore(pts, [k.x, k.y - catScale(cat) * 0.5], k.type + (cat.id !== state.selected ? " (" + cat.cfg.name + ")" : ""), k.room);
+    addScore(pts, [k.x, k.y - catScale(cat) * 0.5], k.type + (!isPlayer(cat) ? " (" + cat.cfg.name + ")" : ""), k.room);
     if (k.room === state.room) { poof(k.x, k.y, k.type === "spider" ? "#333" : "#999"); sfx("catch"); }
+    if (k.house) houseScore(Math.max(2, C.house.points.critterFast - Math.floor(k.t / 3)), [k.x, k.y - 0.12], "caught fast!", k.room);
   }
   function poof(x, y, color) {
     for (var i = 0; i < 10; i++) {
@@ -694,15 +765,14 @@
     return state.snack;
   }
   function chooseThief(sn) {
-    var sel = state.selected;
     var prefer = Math.random() < C.snacks.stanleyChance ? "stanley" : "ollie";
-    // non-selected cat goes first; the selected one only if it is just sitting around
-    var order = prefer === sel ? [other(sel), sel] : [prefer, other(prefer)];
+    // AI cats go first; a player's cat only if it is just sitting around
+    var order = [prefer, other(prefer)].sort(function (a, b) { return (isPlayer(cats[a]) ? 1 : 0) - (isPlayer(cats[b]) ? 1 : 0); });
     for (var i = 0; i < order.length; i++) {
       var c = cats[order[i]];
       if (!c || c.room !== sn.room) continue;
       if (busy(c) || c.mode === "chase" || c.mode === "flee") continue;
-      if (c.id === sel && c.idleTotal < 4 && c.mode !== "nap") continue;
+      if (isPlayer(c) && c.idleTotal < 4 && c.mode !== "nap") continue;
       return c;
     }
     return null;
@@ -778,6 +848,7 @@
         say(cat, "Bad kitty!", 1.8);
         if (visible(cat)) sfx("bad");
         addScore(SC.snackStolen, [sn.x, sn.y - 0.06], cat.cfg.name + " ate it", sn.room);
+        if (sn.house) houseScore(C.house.points.snack, [sn.x, sn.y - 0.12], "tempted!", sn.room);
       }
     } else if (a.then === "cup") {
       var o = cat.task && cat.task.obj;
@@ -790,7 +861,7 @@
     } else if (a.then === "seat") {
       var so = cat.task && cat.task.obj, spt = cat.task && cat.task.spot;
       cat.task = null;
-      cat.perch = { t: cat.id === state.selected ? Infinity : rnd(15, 35), kind: "seat", obj: so, spot: spt, from: so ? so.from : null, idle: 0 };
+      cat.perch = { t: isPlayer(cat) ? Infinity : rnd(15, 35), kind: "seat", obj: so, spot: spt, from: so ? so.from : null, idle: 0 };
       if (so && so.knead) {
         cat.scratchT = 1.4; if (visible(cat)) sfx("scratch");
         say(cat, "knead knead", 1.2);
@@ -800,7 +871,7 @@
     } else if (a.then === "tree") {
       var tr = cat.task && cat.task.obj;
       cat.task = null;
-      cat.perch = { t: cat.id === state.selected ? Infinity : rnd(8, 16), kind: "tree", obj: tr, from: tr ? tr.from : null, idle: 0 };
+      cat.perch = { t: isPlayer(cat) ? Infinity : rnd(8, 16), kind: "tree", obj: tr, from: tr ? tr.from : null, idle: 0 };
       if (tr) tr.occupied = cat.id;
       cat.scratchT = 1.3; cat.facing = -1;
       if (visible(cat)) sfx("scratch");
@@ -994,11 +1065,12 @@
     treatBtn.classList.toggle("armed", state.treatMode);
     if (state.treatMode) showWarn("Tap the floor to drop a treat", 2);
   }
-  function dropTreat(p) {
-    var r = room();
+  function dropTreat(p, roomId, byHouse) {
+    var r = rooms[roomId || state.room];
     var t = clampToFloor(p, r.floor);
-    state.treat = { x: t[0], y: t[1], t: 0, room: r.id };
-    state.treatCooldown = C.treat.cooldown;
+    if (!byHouse && state.treatCooldown > 0) return;
+    state.treat = { x: t[0], y: t[1], t: 0, room: r.id, house: !!byHouse };
+    if (!byHouse) state.treatCooldown = C.treat.cooldown;
     setTreatMode(false);
     // nearest available cat in this room goes for it (cancels a chase)
     var best = null, bd = 1e9;
@@ -1035,6 +1107,7 @@
         state.stats.treats++;
         say(c, "Yum!", 1.2); sfx("yum");
         addScore(SC.treatEaten, [tr.x, tr.y - catScale(c) * 0.6], "", tr.room);
+        if (tr.house) houseScore(C.house.points.treat, [tr.x, tr.y - catScale(c) * 0.9], "bait taken!", tr.room);
       }
     });
     if (state.treat && tr.t > 15) state.treat = null;
@@ -1106,7 +1179,7 @@
       var t = cat.path[0], r = R(cat);
       var dx = t[0] - cat.x, dy = t[1] - cat.y, d = Math.hypot(dx, dy);
       var persp = depthScale(cat.y, r) / r.depth.s2;
-      var boost = (cat.id === "ollie" && cats.stanley && cats.stanley.mode === "chase" && state.selected === "ollie") ? cat.cfg.fleeSpeed / cat.cfg.speed : 1;
+      var boost = (cat.id === "ollie" && cats.stanley && cats.stanley.mode === "chase" && isPlayer(cats.ollie)) ? cat.cfg.fleeSpeed / cat.cfg.speed : 1;
       var v = cat.cfg.speed * cat.speedMul * boost * Math.max(0.35, persp) * dt;
       if (Math.abs(dx) > 0.002) cat.facing = dx > 0 ? 1 : -1;
       if (d <= v) { cat.x = t[0]; cat.y = t[1]; cat.path.shift(); }
@@ -1137,7 +1210,7 @@
         addScore(SC.napPoint * mul, [cat.x, cat.y - catScale(cat) * 0.5], cat.sunny ? "zzz \u2600\uFE0F" : "zzz", cat.room);
       }
       // AI nappers get up eventually
-      if (cat.id !== state.selected && cat.napT > (cat.napLen || (cat.napLen = rnd(25, 50)))) { cat.napLen = 0; wake(cat, true); }
+      if (!isPlayer(cat) && cat.napT > (cat.napLen || (cat.napLen = rnd(25, 50)))) { cat.napLen = 0; wake(cat, true); }
       return;
     }
     if (cat.mode === "idle") {
@@ -1156,11 +1229,11 @@
       if (cat.idleT <= 0) {
         cat.idleT = 3 + Math.random() * 6;
         var roll = Math.random();
-        if (cat.id !== state.selected && roll < C.aiObjectChance && calm) { if (aiPickObject(cat)) return; }
+        if (!isPlayer(cat) && roll < C.aiObjectChance && calm) { if (aiPickObject(cat)) return; }
         roll = Math.random();
         if (roll < 0.45) cat.blink = 0.25;
         else if (roll < 0.75) cat.sit = cat.sit ? 0 : 1;
-        else if (cat.id !== state.selected && Math.random() < 0.5) {
+        else if (!isPlayer(cat) && Math.random() < 0.5) {
           var keep = cat.idleTotal;
           walkTo(cat, clampToFloor([cat.x + (Math.random() - 0.5) * 0.2, cat.y + (Math.random() - 0.5) * 0.08], R(cat).floor));
           cat.idleTotal = keep; // small wanders don't reset the nap clock
@@ -1170,6 +1243,7 @@
   }
 
   /* ---------- input ---------- */
+  // The phone decides what a tap means and sends a command; act() carries it out (locally, or on the host).
   function onPointer(e) {
     e.preventDefault();
     unlockAudio();
@@ -1179,59 +1253,96 @@
     var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
     var p = toImage(sx, sy);
     if (DEBUG) debugEl.textContent = "tap " + p[0].toFixed(3) + ", " + p[1].toFixed(3);
+    if (state.role === "house") { houseTap(p, sx, sy); return; }
+    var me = state.selected;
     // snack?
     var sn = state.snack;
     if (sn && sn.state !== "eaten" && sn.room === state.room) {
       var sp = toScreen([sn.x, sn.y]);
       var rr = Math.max(28, sn.surf.size * view.ih * 1.1);
-      if (Math.hypot(sx - sp[0], sy - (sp[1] - rr * 0.3)) < rr) { if (putAwaySnack()) return; }
+      if (Math.hypot(sx - sp[0], sy - (sp[1] - rr * 0.3)) < rr && sn.state !== "stealing") { act(me, { k: "putaway" }); return; }
     }
     if (state.treatMode) {
-      if (p[0] >= 0 && p[0] <= 1 && p[1] >= 0 && p[1] <= 1) dropTreat(p);
+      if (p[0] >= 0 && p[0] <= 1 && p[1] >= 0 && p[1] <= 1) { act(me, { k: "treat", p: p, room: state.room }); setTreatMode(false); }
       return;
     }
     var hit = hitCat(sx, sy);
     if (hit) CatAudio.cat(hit);
-    if (hit && cats[hit].perch && cats[hit].perch.nap) { var hp = cats[hit].perch; hp.nap = false; hp.idle = 0; cats[hit].sunny = null; say(cats[hit], "Mrrp?", 1); if (hit !== state.selected) selectCat(hit, true); return; }
-    if (hit && cats[hit].mode === "nap") { wake(cats[hit]); if (hit !== state.selected) selectCat(hit, true); return; }
-    if (hit && hit !== state.selected) { selectCat(hit); return; }
-    if (hit && hit === state.selected && !cats[hit].perch) {
-      var me = cats[hit];
-      var rug = objects.filter(function (o) { return o.type === "rug" && o.room === me.room && inRect([me.x, me.y], o.rect); })[0];
-      if (rug && !me.air && me.mode !== "scuffle" && me.mode !== "roll") { useObject(me, rug); return; }   // tap your cat on the rug: it rolls
-      say(me, hit === "stanley" ? "Mrrow." : "Mew!", 0.9); return;
+    var multi = net.on;
+    if (hit && (cats[hit].perch && cats[hit].perch.nap || cats[hit].mode === "nap")) { act(hit, { k: "wake" }); if (hit !== me && !multi) selectCat(hit, true); return; }
+    if (hit && hit !== me) { if (!multi) selectCat(hit); return; }
+    var cat = cats[me];
+    if (hit && !cat.perch) {
+      var rug = objects.filter(function (o) { return o.type === "rug" && o.room === cat.room && inRect([cat.x, cat.y], o.rect); })[0];
+      if (rug && !cat.air && cat.mode !== "scuffle" && cat.mode !== "roll") { act(me, { k: "obj", id: rug.id }); return; }   // tap your cat on the rug: it rolls
+      say(cat, me === "stanley" ? "Mrrow." : "Mew!", 0.9); return;
     }
-    if (hit && hit === state.selected && cats[hit].perch && cats[hit].perch.kind !== "tree" && cats[hit].perch.kind !== "seat") return;
+    if (hit && cat.perch && cat.perch.kind !== "tree" && cat.perch.kind !== "seat") return;
     if (p[0] < 0 || p[0] > 1 || p[1] < 0 || p[1] > 1) return;
-    var cat = cats[state.selected];
+    if (cat.room !== state.room) return;
     var obj = objectAt(p, sx, sy);
     var t = clampToFloor(p, room().floor);
+    if (obj && obj.type === "rug" && !(inRect([cat.x, cat.y], obj.rect) && !cat.perch)) obj = null;  // first tap walks onto the rug, then tap the cat to roll
     // tapping the floor right under a tree/couch rect should still walk there
-    if (obj && obj.type === "rug" && !(inRect([cat.x, cat.y], obj.rect) && !cat.perch)) obj = null;  // first tap walks onto the rug, next tap rolls
     if (obj && obj.rect && obj.type !== "rug" && inPoly(p, room().floor) && p[1] > obj.rect[3] - 0.04) obj = null;
-    if (obj && cat.perch && cat.perch.obj === obj && obj.type === "seat") {
-      // tap another spot on the same furniture: hop over to it
-      var near = freeSpots(obj, cat).sort(function (a, b) { return hdist(a, p) - hdist(b, p); })[0];
-      if (near && near !== cat.perch.spot) {
-        cat.perch.spot.occupied = null; near.occupied = cat.id;
-        var keepObj = obj; cat.perch = null;
-        cat.task = { obj: keepObj, spot: near };
-        hop(cat, [near[0], near[1]], near[2], { then: "seat", dur: 0.6, h: 0.06, sortY: keepObj.sortY });
-      }
+    if (obj && cat.perch && cat.perch.obj === obj && obj.type !== "seat") return;
+    if (obj) {
+      act(me, { k: "obj", id: obj.id, p: p });
+      state.ripples.push({ x: obj.x != null ? obj.x : t[0], y: obj.type === "tree" ? obj.from[1] : (obj.y != null ? obj.y : t[1]), t: 0 });
+    } else {
+      act(me, { k: "walk", p: t });
+      state.ripples.push({ x: t[0], y: t[1], t: 0 });
+    }
+    sfx("tap");
+  }
+  var objById = {};
+  objects.forEach(function (o) { objById[o.id] = o; });
+  function act(catId, c) {
+    if (net.on && net.role === "client") { netSend({ t: "cmd", cat: catId, c: c }); return; }
+    doAct(catId, c);
+  }
+  function doAct(catId, c) {
+    var cat = cats[catId];
+    if (c.k === "house") { houseAct(c, catId); return; }
+    if (c.k === "putaway") { putAwaySnack(); return; }
+    if (c.k === "treat") { dropTreat(c.p, c.room); return; }
+    if (!cat) return;
+    if (c.k === "wake") {
+      if (cat.perch && cat.perch.nap) { cat.perch.nap = false; cat.perch.idle = 0; cat.sunny = null; say(cat, "Mrrp?", 1); }
+      else if (cat.mode === "nap") wake(cat);
       return;
     }
-    if (obj && cat.perch && cat.perch.obj === obj) return;
+    if (c.k === "door") {
+      var d = (R(cat).doors || []).filter(function (x) { return x.to === c.to; })[0];
+      if (!d || cat.air || cat.mode === "scuffle") return;
+      if (cat.perch) { if (cat.perch.obj && cat.perch.obj.occupied === cat.id) cat.perch.obj.occupied = null; if (cat.perch.spot) cat.perch.spot.occupied = null; cat.perch = null; cat.scaleOverride = null; cat.sortY = null; }
+      cat.task = null; cat.snackGoal = null; cat.treatGoal = null;
+      if (cats.stanley && cats.stanley.mode === "chase") { cats.stanley.mode = "idle"; cats.stanley.path = []; }
+      aiTravel(cat, d);
+      return;
+    }
     if (cat.task && cat.task.obj) cat.task.obj.claimed = null;
     if (cat.task && cat.task.spot && !cat.air) cat.task.spot.occupied = null;
     if (!cat.air) cat.task = null;
     if (cat.snackGoal) { cat.snackGoal = null; } // steering the thief away stops the theft
-    cat.treatGoal = null;
-    var ok = command(cat, function () {
-      if (obj) { if (useObject(cat, obj, p)) state.ripples.push({ x: obj.x != null ? obj.x : t[0], y: obj.type === "tree" ? obj.from[1] : (obj.y != null ? obj.y : t[1]), t: 0 }); }
-      else walkTo(cat, t);
-    });
-    if (ok && !obj) state.ripples.push({ x: t[0], y: t[1], t: 0 });
-    sfx("tap");
+    cat.treatGoal = null; cat.doorGoal = null;
+    if (c.k === "walk") { command(cat, function () { walkTo(cat, clampToFloor(c.p, R(cat).floor)); }); return; }
+    if (c.k === "obj") {
+      var obj = objById[c.id];
+      if (!obj || obj.room !== cat.room) return;
+      if (cat.perch && cat.perch.obj === obj && obj.type === "seat") {
+        // tap another spot on the same furniture: hop over to it
+        var near = freeSpots(obj, cat).sort(function (a, b) { return hdist(a, c.p) - hdist(b, c.p); })[0];
+        if (near && near !== cat.perch.spot) {
+          cat.perch.spot.occupied = null; near.occupied = cat.id;
+          cat.perch = null;
+          cat.task = { obj: obj, spot: near };
+          hop(cat, [near[0], near[1]], near[2], { then: "seat", dur: 0.6, h: 0.06, sortY: obj.sortY });
+        }
+        return;
+      }
+      command(cat, function () { useObject(cat, obj, c.p); });
+    }
   }
   function hitCat(sx, sy) {
     var best = null;
@@ -1271,8 +1382,10 @@
         e.stopPropagation(); unlockAudio(); closeAudioPanel();
         if (state.paused) return;
         CatAudio.cat(id);
-        if (cats[id].mode === "nap") wake(cats[id]);
-        selectCat(id);
+        if (state.role === "house") { if (cats[id].room !== state.room) fadeToView(cats[id].room); return; }
+        if (net.on && id !== state.selected) { showToast(cats[id].cfg.name + (state.controlled[id] ? " is on another phone" : " is on autopilot") + " \u2014 " + R(cats[id]).name); return; }
+        if (cats[id].mode === "nap") act(id, { k: "wake" });
+        if (!net.on) selectCat(id);
       });
       catBtns.appendChild(b);
     });
@@ -1324,10 +1437,533 @@
     setTreatMode(!state.treatMode);
   });
 
+  /* ---------- view follows "my" cat; camera pan ---------- */
+  function doorTap(d) {
+    if (state.paused) return;
+    if (state.role === "house") { fadeToView(d.to); sfx("door"); return; }
+    if (net.on) { act(state.selected, { k: "door", to: d.to }); sfx("door"); return; }
+    goTo(d);
+  }
+  function followMyCat() {
+    if (state.role === "house" || state.transitioning) return;
+    var c = cats[state.selected];
+    if (c && c.room && c.room !== state.room) fadeToView(c.room);
+  }
+  var cam = { x: 0.5, y: 0.5 };
+  function camZoom() { return params.get("nopan") === "1" ? 1 : C.camera.zoom; }
+  function camTarget() {
+    if (state.role === "house") return [0.5, 0.5];
+    var c = cats[state.selected];
+    if (!c || c.room !== state.room) return [0.5, 0.5];
+    return [c.x, c.y - catScale(c) * 0.5];
+  }
+  function applyCamera() {
+    var w = view.w, h = view.h, ar = 16 / 9, bw, bh;
+    if (w / h > ar) { bh = h; bw = h * ar; } else { bw = w; bh = w / ar; }
+    var z = camZoom() * dollyZoom(), cc = dollyCenter(cam.x, cam.y);
+    view.iw = bw * z; view.ih = bh * z;
+    function axis(size, isz, c) { if (isz <= size) return (size - isz) / 2; return Math.min(0, Math.max(size - isz, size / 2 - c * isz)); }
+    view.ix = axis(w, view.iw, cc[0]); view.iy = axis(h, view.ih, cc[1]);
+  }
+  var lastCam = "";
+  function updateCamera(dt, snap) {
+    var t = camTarget(), k = snap ? 1 : Math.min(1, dt * C.camera.follow);
+    cam.x += (t[0] - cam.x) * k; cam.y += (t[1] - cam.y) * k;
+    applyCamera();
+    var key = Math.round(view.ix) + "," + Math.round(view.iy);
+    if (key !== lastCam) { lastCam = key; placeHotspots(); }
+  }
+
+  /* ---------- the House (game master) ---------- */
+  function houseActive() { return state.houseMode || (net.on && !!state.controlled.house); }
+  function houseReset() {
+    var H = C.house.tools;
+    state.house = { score: 0, charges: {}, cd: {}, rc: {} };
+    Object.keys(H).forEach(function (k) { state.house.charges[k] = H[k].charges || 0; state.house.cd[k] = 0; state.house.rc[k] = 0; });
+  }
+  houseReset();
+  function houseScore(n, at, label, roomId) {
+    if (!houseActive()) return;
+    state.house.score += n;
+    var txt = "\uD83C\uDFE0 +" + n + " " + label;
+    if (at) netEvent({ k: "pop", x: at[0], y: at[1], text: txt, good: true, room: roomId });
+    if (at && roomId === state.room) state.popups.push({ x: at[0], y: at[1], text: txt, good: true, t: 0 });
+  }
+  function updateHouse(dt) {
+    var H = state.house, T = C.house.tools;
+    Object.keys(T).forEach(function (k) {
+      if (H.cd[k] > 0) H.cd[k] = Math.max(0, H.cd[k] - dt);
+      if (T[k].charges && H.charges[k] < T[k].charges) {
+        H.rc[k] = (H.rc[k] || T[k].recharge) - dt;
+        if (H.rc[k] <= 0) { H.charges[k]++; H.rc[k] = H.charges[k] < T[k].charges ? T[k].recharge : 0; }
+      }
+    });
+  }
+  function houseReady(tool) {
+    var T = C.house.tools[tool], H = state.house;
+    return T && (T.charges ? H.charges[tool] > 0 : !(H.cd[tool] > 0));
+  }
+  // runs on the host (or locally in solo House mode)
+  function houseAct(c) {
+    var tool = c.tool, T = C.house.tools[tool], H = state.house, r = rooms[c.room];
+    if (!T || !r || !houseReady(tool)) return false;
+    var ok = false, q = clampToFloor(c.p || r.spawn, r.floor);
+    if (tool === "treat") { dropTreat(q, r.id, true); ok = true; }
+    else if (tool === "spider" || tool === "mouse") {
+      var k = spawnCritter(tool, r.id);
+      if (k) { k.x = q[0]; k.y = q[1]; if (tool === "mouse") k.target = randomIn(r.floor); k.house = true; k.noticeT = rnd(2, 5); ok = true; }
+    } else if (tool === "snack") {
+      if (r.surfaces && r.surfaces.length && !state.snack) {
+        var sn = spawnSnack(r.id);
+        if (sn) {
+          var best = r.surfaces.slice().sort(function (a, b) { return hdist(centroid(a.poly), c.p) - hdist(centroid(b.poly), c.p); })[0];
+          var pp = inPoly(c.p, best.poly) ? c.p : randomIn(best.poly);
+          sn.surf = best; sn.x = pp[0]; sn.y = pp[1]; sn.house = true; sn.warnAt = 2.5; ok = true;
+        }
+      }
+    } else if (tool === "toy") {
+      var toy = objById[c.id];
+      if (!toy || toy.room !== r.id) toy = objects.filter(function (o) { return o.type === "toy" && o.room === r.id; })[0];
+      if (toy) {
+        var a = Math.random() * Math.PI * 2;
+        toy.vx = Math.cos(a) * 0.4; toy.vy = Math.sin(a) * 0.08;
+        houseScore(C.house.points.toy, [toy.x, toy.y - 0.08], "zoom!", r.id);
+        // a nearby AI cat may chase it
+        catsIn(r.id).forEach(function (cat) { if (!isPlayer(cat) && !busy(cat) && Math.random() < 0.7) setTimeout(function () { if (!busy(cat)) useObject(cat, toy); }, 600); });
+        ok = true;
+      }
+    }
+    if (!ok) return false;
+    if (T.charges) { H.charges[tool]--; if (!(H.rc[tool] > 0)) H.rc[tool] = T.recharge; } else H.cd[tool] = T.cd;
+    return true;
+  }
+  var houseBar = $("house-bar"), houseVal = $("house-val");
+  function buildHouseBar() {
+    var T = C.house.tools;
+    houseBar.innerHTML = "";
+    Object.keys(T).forEach(function (k) {
+      var b = document.createElement("button");
+      b.dataset.tool = k;
+      b.innerHTML = '<span class="ico">' + T[k].icon + '</span><span class="lbl">' + T[k].label + '</span><i></i>';
+      b.addEventListener("click", function (e) { e.stopPropagation(); unlockAudio(); setHouseTool(state.houseTool === k ? null : k); });
+      houseBar.appendChild(b);
+    });
+  }
+  function setHouseTool(k) {
+    if (k && !houseReady(k)) { showWarn(C.house.tools[k].label + " is recharging\u2026", 1.2); return; }
+    state.houseTool = k;
+    Array.prototype.forEach.call(houseBar.children, function (b) { b.classList.toggle("armed", b.dataset.tool === k); });
+    if (k) showWarn({ treat: "Tap the floor to drop a treat", spider: "Tap the floor: a spider drops in!", mouse: "Tap the floor: a mouse appears!", snack: "Tap a counter or table", toy: "Tap a toy mouse to send it zooming" }[k], 2);
+  }
+  var lastHouseKey = "";
+  function updateHouseUI() {
+    if (houseVal.textContent !== String(state.house.score)) houseVal.textContent = state.house.score;
+    if (state.role !== "house") return;
+    var H = state.house, T = C.house.tools;
+    var key = JSON.stringify([H.charges, Object.keys(H.cd).map(function (k) { return Math.ceil(H.cd[k]); }), Object.keys(H.rc).map(function (k) { return Math.ceil(H.rc[k] || 0); })]);
+    if (key === lastHouseKey) return;
+    lastHouseKey = key;
+    Array.prototype.forEach.call(houseBar.children, function (b) {
+      var k = b.dataset.tool, i = b.querySelector("i");
+      var ready = houseReady(k);
+      b.classList.toggle("cooling", !ready);
+      i.textContent = T[k].charges ? (H.charges[k] + (H.charges[k] < T[k].charges ? " \u00b7 " + Math.ceil(H.rc[k] || 0) + "s" : "")) : (H.cd[k] > 0 ? Math.ceil(H.cd[k]) + "s" : "");
+    });
+  }
+  function houseTap(p, sx, sy) {
+    var tool = state.houseTool;
+    var hit = hitCat(sx, sy);
+    if (!tool) {
+      if (hit) { CatAudio.cat(hit); say(cats[hit], hit === "stanley" ? "Mrrow?" : "Mew?", 0.8); return; }
+      showWarn("Pick a House tool, then tap the room", 1.8); return;
+    }
+    if (p[0] < 0 || p[0] > 1 || p[1] < 0 || p[1] > 1) return;
+    var c = { k: "house", tool: tool, room: state.room, p: p };
+    if (tool === "toy") {
+      var o = objectAt(p, sx, sy);
+      var toy = o && o.type === "toy" ? o : objects.filter(function (q) { return q.type === "toy" && q.room === state.room; })[0];
+      if (!toy) { showWarn("No toy mouse in this room", 1.6); return; }
+      c.id = toy.id;
+    }
+    if (tool === "snack" && !(room().surfaces && room().surfaces.length)) { showWarn("No counter or table in this room", 1.6); return; }
+    if (tool === "snack" && state.snack) { showWarn("There's already food out", 1.6); return; }
+    if ((tool === "spider" || tool === "mouse") && state.critters.some(function (k) { return k.room === state.room && k.type === tool; })) { showWarn("There's already a " + tool + " here", 1.6); return; }
+    act(null, c);
+    var t = clampToFloor(p, room().floor);
+    state.ripples.push({ x: t[0], y: t[1], t: 0 });
+    sfx("tap");
+    setHouseTool(null);
+  }
+  // little house map: which cat is where, tap a room to look
+  var MAP = [["stairway", 0, 0], ["living", 1, 0], ["kitchen", 2, 0], ["walkway", 3, 0], ["dining", 4, 0], ["hallway", 1, 1], ["pantry", 2, 1], ["mudroom", 3, 1]];
+  var mapEl = $("map"), lastMapKey = "";
+  function updateMap(force) {
+    if (mapEl.hidden) return;
+    var key = JSON.stringify([state.room, catIds.map(function (id) { return cats[id].room; }), state.critters.map(function (k) { return k.room + k.type; }), state.snack && state.snack.room]);
+    if (key === lastMapKey && !force) return;
+    lastMapKey = key;
+    mapEl.innerHTML = MAP.filter(function (m) { return rooms[m[0]]; }).map(function (m) {
+      var id = m[0];
+      var faces = catIds.filter(function (c) { return cats[c].room === id; }).map(function (c) { return '<img src="' + cats[c].cfg.face + '">'; }).join("");
+      var marks = state.critters.filter(function (k) { return k.room === id && !k.caught; }).map(function (k) { return k.type === "spider" ? "\uD83D\uDD77\uFE0F" : "\uD83D\uDC2D"; }).join("") + (state.snack && state.snack.room === id ? "\uD83D\uDC1F" : "");
+      return '<button data-room="' + id + '" class="' + (id === state.room ? "here" : "") + '" style="grid-column:' + (m[1] + 1) + ';grid-row:' + (m[2] + 1) + '"><span>' + rooms[id].name.replace("Kitchen ", "") + "</span><b>" + faces + marks + "</b></button>";
+    }).join("");
+  }
+  mapEl.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var b = e.target.closest("button[data-room]");
+    if (!b) return;
+    if (state.role === "house") fadeToView(b.dataset.room);
+    else showToast(rooms[b.dataset.room].name);
+    lastMapKey = "";
+  });
+  mapEl.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+  $("map-btn").addEventListener("click", function (e) { e.stopPropagation(); mapEl.hidden = !mapEl.hidden; updateMap(true); });
+
+  // Switch this phone between playing a cat and playing the House.
+  function setMyRole(role) {
+    state.role = role === "house" ? "house" : "cat";
+    document.body.classList.toggle("house-role", state.role === "house");
+    houseBar.hidden = state.role !== "house";
+    $("house-pill").hidden = !houseActive() && state.role !== "house";
+    $("map-btn").hidden = state.role !== "house";
+    mapEl.hidden = state.role !== "house";
+    treatBtn.hidden = state.role === "house";
+    if (state.role === "house") { setHouseTool(null); lastHouseKey = ""; updateMap(true); }
+    else selectCat(role, true);
+    lastBadgeKey = "";
+  }
+  function startHouseMode() {
+    state.houseMode = true;
+    houseReset();
+    setMyRole("house");
+    hideOverlays();
+    showToast("\uD83C\uDFE0 You are the House!");
+  }
+
+  /* ---------- 2-3 phones: PeerJS (WebRTC data channel), host-authoritative ---------- */
+  var CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  function peerId(code) { return "ollie-stanley-v3-" + code.toLowerCase(); }
+  function roleName(r) { return r === "house" ? "The House" : (cats[r] ? cats[r].cfg.name : r); }
+  function newCode() { var s = ""; for (var i = 0; i < 4; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]; return s; }
+  function netEvent(e) {
+    if (!net.on || net.role !== "host") return;
+    e.seq = ++net.seq; e.at = performance.now();
+    net.events.push(e); if (net.events.length > 50) net.events.shift();
+  }
+  function netSend(m) { try { if (net.conn && net.conn.open) net.conn.send(m); } catch (e) { /* ignore */ } }
+  var netStatusEl = $("net-status"), netBanner = $("net-banner");
+  function netStatus() {
+    if (!net.on) { netStatusEl.hidden = true; $("house-pill").hidden = !houseActive(); return; }
+    var who = ["ollie", "stanley", "house"].filter(function (r) { return state.controlled[r]; }).map(roleName);
+    netStatusEl.hidden = false;
+    netStatusEl.innerHTML = "\uD83D\uDCF1 <b>" + net.code + "</b> \u00b7 " + (who.length ? who.join(" + ") : "\u2026");
+    $("house-pill").hidden = !houseActive();
+  }
+  function showNetBanner(text, solo) {
+    netBanner.hidden = false;
+    $("net-banner-text").textContent = text;
+    $("net-solo").hidden = !solo;
+  }
+  function hostGame(myRole, cb, code, tries) {
+    if (!window.Peer) { cb("Couldn't load the networking code"); return; }
+    code = code || newCode();
+    var peer = new Peer(peerId(code), { debug: 1 });
+    var opened = false;
+    peer.on("open", function () {
+      opened = true;
+      net.peer = peer; net.on = true; net.role = "host"; net.code = code; net.conns = [];
+      state.controlled = { ollie: null, stanley: null, house: null };
+      state.controlled[myRole] = "host";
+      state.houseMode = false;
+      houseReset();
+      setMyRole(myRole);
+      netStatus();
+      cb(null, code);
+    });
+    peer.on("error", function (err) {
+      if (!opened && err.type === "unavailable-id" && (tries || 0) < 3) { try { peer.destroy(); } catch (e) {} hostGame(myRole, cb, null, (tries || 0) + 1); return; }
+      if (!opened) { cb("Couldn't start hosting (" + (err.type || err) + ")"); try { peer.destroy(); } catch (e) {} }
+    });
+    peer.on("connection", function (conn) {
+      conn.lastRx = performance.now();
+      conn.on("data", function (d) { conn.lastRx = performance.now(); hostOnData(conn, d); });
+      conn.on("close", function () { hostDrop(conn); });
+      conn.on("error", function () { hostDrop(conn); });
+    });
+    peer.on("disconnected", function () { setTimeout(function () { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} }, 1500); });
+  }
+  function hostOnData(conn, d) {
+    if (!d || !d.t) return;
+    if (d.t === "hello") {
+      var want = d.role;
+      if (["ollie", "stanley", "house"].indexOf(want) < 0) { conn.send({ t: "reject", reason: "bad" }); return; }
+      var holder = state.controlled[want];
+      if (holder && holder !== d.cid) { conn.send({ t: "reject", reason: "taken", roles: state.controlled }); return; }
+      state.controlled[want] = d.cid; conn.role = want; conn.cid = d.cid;
+      net.conns = net.conns.filter(function (c) { return c.cid !== d.cid; });
+      net.conns.push(conn);
+      conn.send({ t: "welcome", role: want, code: net.code });
+      showWarn(roleName(want) + " joined! \uD83D\uDCF1", 2);
+      var c = cats[want];
+      if (c) { c.task = null; c.doorGoal = null; if (["hunt", "toDoor", "toObj"].indexOf(c.mode) >= 0) { c.mode = "idle"; c.path = []; } if (c.perch) c.perch.t = Infinity; }
+      netStatus(); lastBadgeKey = "";
+    } else if (d.t === "cmd" && conn.role) {
+      var k = d.c && d.c.k;
+      if (k === "house") { if (conn.role === "house") doAct(null, d.c); return; }
+      if (conn.role === "house") return;
+      if (k !== "putaway" && k !== "treat" && d.cat !== conn.role) return;
+      doAct(conn.role, d.c);
+    } else if (d.t === "bye") { hostDrop(conn); }
+  }
+  function hostDrop(conn) {
+    if (conn._dropped) return;
+    conn._dropped = true;
+    if (conn.role && state.controlled[conn.role] === conn.cid) {
+      state.controlled[conn.role] = null;
+      showWarn(roleName(conn.role) + " left \u2014 " + (conn.role === "house" ? "no House for now" : "AI takes over"), 2.5);
+      var c = cats[conn.role]; if (c && c.perch && c.perch.t === Infinity) c.perch.t = rnd(5, 12);
+    }
+    net.conns = net.conns.filter(function (c) { return c !== conn; });
+    netStatus(); lastBadgeKey = "";
+  }
+  var snapT = 0;
+  function hostBroadcast(dt) {
+    snapT -= dt;
+    var nowH = performance.now();
+    net.conns.slice().forEach(function (c) { if (nowH - (c.lastRx || nowH) > 6000) { try { c.close(); } catch (e) {} hostDrop(c); } });
+    if (snapT > 0 || !net.conns.length) return;
+    snapT = 0.1;
+    var s = makeSnap();
+    net.conns.forEach(function (c) { try { if (c.open) c.send({ t: "snap", s: s }); } catch (e) {} });
+  }
+  function r4(v) { return Math.round(v * 10000) / 10000; }
+  function snapCat(c) {
+    return { id: c.id, room: c.room, x: r4(c.x), y: r4(c.y), mode: c.mode, f: c.facing, mv: r4(c.moveAmt), st: r4(c.stillT), pc: c.pounce, sw: c.swipeT || 0,
+      sc: c.scratchT || 0, sq: c.squash || 0, rl: c.rollT || 0, al: r4(c.airLift || 0), so: c.scaleOverride || null, sy: c.sortY == null ? null : c.sortY,
+      w: c.path.length > 0, sm: c.speedMul, b: c.bubble, bl: c.blink, sn: c.sunny ? c.sunny.id : null, sit: c.sit,
+      air: c.air ? { then: c.air.then } : null, pr: c.perch ? { kind: c.perch.kind, nap: !!c.perch.nap, obj: c.perch.obj ? c.perch.obj.id : null } : null };
+  }
+  function snapObj(o) {
+    var s = { id: o.id };
+    if (o.type === "cup") { s.st = o.state; s.fall = o.fall || null; s.bt = o.brokenT || 0; }
+    if (o.type === "toy") { s.x = r4(o.x); s.y = r4(o.y); s.sp = Math.round(o.spin * 100) / 100; }
+    if (o.marks) s.mk = o.marks;
+    if (o.type === "tree") s.oc = o.occupied || null;
+    if (o.spots) s.spots = o.spots.map(function (sp) { return sp.occupied || null; });
+    return s;
+  }
+  function makeSnap() {
+    var sn = state.snack, now = performance.now();
+    return {
+      cats: catIds.map(function (id) { return snapCat(cats[id]); }),
+      crit: state.critters.map(function (k) { return { id: k.id, type: k.type, room: k.room, x: r4(k.x), y: r4(k.y), drop: r4(k.drop || 0), dropFrom: k.dropFrom, facing: k.facing, moving: !!k.moving, caught: k.caught, t: r4(k.t) }; }),
+      snack: sn ? { item: sn.item.id, room: sn.room, si: rooms[sn.room].surfaces.indexOf(sn.surf), x: r4(sn.x), y: r4(sn.y), state: sn.state, thief: sn.thief } : null,
+      treat: state.treat, objs: objects.map(snapObj),
+      score: state.score, stats: state.stats, catStats: state.catStats, house: state.house,
+      round: state.round ? state.round.left : null, tcd: state.treatCooldown, ctl: state.controlled,
+      ev: net.events.filter(function (e) { return now - e.at < 3000; })
+    };
+  }
+  // ---- client side ----
+  function joinGame(code, role, cb) {
+    if (!window.Peer) { cb("Couldn't load the networking code"); return; }
+    code = (code || "").toUpperCase().replace(/[^A-Z]/g, "");
+    if (code.length !== 4) { cb("Codes are 4 letters"); return; }
+    net.cid = store.get("cid", null);
+    if (!net.cid) { net.cid = "c" + Math.random().toString(36).slice(2, 10); store.set("cid", net.cid); }
+    var peer = new Peer({ debug: 1 });
+    net.peer = peer;
+    peer.on("open", function () { connectTo(code, role, cb); });
+    peer.on("error", function (err) {
+      if (err.type === "peer-unavailable") { if (net.pendingCb) { net.pendingCb("No game found with code " + code); net.pendingCb = null; } }
+      else if (net.pendingCb) { net.pendingCb("Network problem (" + (err.type || err) + ")"); net.pendingCb = null; }
+    });
+    peer.on("disconnected", function () { setTimeout(function () { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} }, 1500); });
+  }
+  function connectTo(code, role, cb) {
+    net.pendingCb = cb || null;
+    var conn = net.peer.connect(peerId(code), { reliable: true, serialization: "json" });
+    net.conn = conn;
+    conn.on("open", function () { conn.send({ t: "hello", role: role, cid: net.cid }); });
+    conn.on("data", function (d) {
+      if (!d || !d.t) return;
+      if (net.conn === conn) net.lastRx = performance.now();
+      if (d.t === "welcome") {
+        var first = !net.on;
+        net.on = true; net.role = "client"; net.code = code; net.myRole = d.role; net.lostAt = 0;
+        state.houseMode = false;
+        netBanner.hidden = true;
+        if (first) setMyRole(d.role);
+        netStatus();
+        if (net.pendingCb) { net.pendingCb(null); net.pendingCb = null; }
+      } else if (d.t === "reject") {
+        if (net.pendingCb) { net.pendingCb(d.reason === "taken" ? roleName(role) + " is already taken \u2014 pick another" : "The host said no"); net.pendingCb = null; }
+        try { conn.close(); } catch (e) {}
+      } else if (d.t === "snap" && net.role === "client") applySnap(d.s);
+    });
+    conn.on("close", function () { if (net.conn === conn) clientLost(); });
+    conn.on("error", function () { if (net.conn === conn) clientLost(); });
+    setTimeout(function () { if (net.pendingCb && net.conn === conn && !net.on) { net.pendingCb("Couldn't reach the host (this network may block phone-to-phone play)"); net.pendingCb = null; } }, 15000);
+  }
+  function clientLost() {
+    if (!net.on || net.role !== "client" || net.lostAt) return;
+    var lostAt = net.lostAt = performance.now();
+    showNetBanner("Lost the host \u2014 reconnecting\u2026", false);
+    setTimeout(function () { if (net.on && net.lostAt === lostAt) showNetBanner("Can't reach the host.", true); }, 30000);
+    var tryAgain = function () {
+      if (!net.on || net.lostAt !== lostAt) return;
+      if (performance.now() - net.lostAt > 30000) { showNetBanner("Can't reach the host.", true); return; }
+      try { connectTo(net.code, net.myRole, function (err) { if (!err) { net.lostAt = 0; netBanner.hidden = true; showWarn("Reconnected!", 1.5); } }); } catch (e) {}
+      setTimeout(tryAgain, 4000);
+    };
+    setTimeout(tryAgain, 1500);
+  }
+  // Keep playing alone from where things are (also used if the host quits).
+  function goSolo() {
+    var wasHouse = state.role === "house";
+    try { if (net.conn) net.conn.close(); } catch (e) {}
+    try { if (net.peer) net.peer.destroy(); } catch (e) {}
+    net.on = false; net.role = null; net.conns = []; net.lostAt = 0;
+    state.controlled = {};
+    netBanner.hidden = true;
+    catIds.forEach(function (id) {
+      var c = cats[id];
+      c.task = null; c.doorGoal = null; c.snackGoal = null; c.treatGoal = null;
+      if (c.air) { c.air = null; c.airLift = 0; if (!c.perch) { c.scaleOverride = null; c.sortY = null; } }
+      if (c.perch) {
+        var o = c.perch.obj;
+        var spot = o && o.spots ? o.spots.filter(function (s) { return s.occupied === id; })[0] : null;
+        c.perch = { kind: c.perch.kind, obj: o, spot: spot, from: o && o.from ? o.from : [c.x, 0.9], t: rnd(4, 9), idle: 0, nap: c.perch.nap };
+        if (c.perch.kind !== "seat" && c.perch.kind !== "tree") c.perch.t = 0.5;
+      }
+      if (["toObj", "toDoor", "hunt", "toSnack", "toTreat", "flee", "chase", "jump", "scuffle", "scratch", "roll"].indexOf(c.mode) >= 0) c.mode = "idle";
+      c.path = [];
+    });
+    if (state.snack && state.snack.state !== "fresh") state.snack = null;
+    objects.forEach(function (o) { if (o.type === "cup" && o.state === "falling") { o.state = "broken"; o.brokenT = 9; o.respawn = 5; } });
+    if (wasHouse) { state.houseMode = true; setMyRole("house"); } else { state.houseMode = false; setMyRole(state.selected); }
+    netStatus();
+    showToast("Playing on this phone");
+  }
+  function applySnap(s) {
+    s.cats.forEach(function (q) {
+      var c = cats[q.id]; if (!c) return;
+      var moved = c.room !== q.room || hdist([c.x, c.y], [q.x, q.y]) > 0.25;
+      c.room = q.room;
+      if (moved) { c.x = q.x; c.y = q.y; }
+      c._tx = q.x; c._ty = q.y;
+      c.mode = q.mode; c.facing = q.f; c.moveAmt = q.mv; c.stillT = q.st; c.pounce = q.pc; c.swipeT = q.sw; c.scratchT = q.sc;
+      c.squash = q.sq; c.rollT = q.rl; c.airLift = q.al; c.scaleOverride = q.so; c.sortY = q.sy; c.path = q.w ? [[q.x, q.y]] : [];
+      c.speedMul = q.sm; c.blink = q.bl; c.sit = q.sit; c.sunny = q.sn ? objById[q.sn] : null; c.air = q.air;
+      c.perch = q.pr ? { kind: q.pr.kind, nap: q.pr.nap, obj: q.pr.obj ? objById[q.pr.obj] : null, t: Infinity, idle: 0 } : null;
+      if (!q.b) c.bubble = null; else if (!c.bubble || c.bubble.text !== q.b.text) c.bubble = { text: q.b.text, t: q.b.t, max: q.b.max };
+    });
+    var old = {};
+    state.critters.forEach(function (k) { old[k.id] = k; });
+    state.critters = s.crit.map(function (q) {
+      var k = old[q.id];
+      if (k) { k._tx = q.x; k._ty = q.y; k.drop = q.drop; k.facing = q.facing; k.moving = q.moving; k.t = q.t; k.room = q.room;
+        if (q.caught && !k.caught && q.room === state.room) { poof(k.x, k.y, k.type === "spider" ? "#333" : "#999"); sfx("catch"); }
+        k.caught = q.caught; return k; }
+      if (q.room === state.room && !q.caught) { showWarn(q.type === "spider" ? "A spider! Catch it! \uD83D\uDD77\uFE0F" : "A mouse! Quick, catch it! \uD83D\uDC2D", 2); sfx(q.type === "spider" ? "boop" : "squeak"); }
+      q._tx = q.x; q._ty = q.y; return q;
+    });
+    if (s.snack) {
+      var r = rooms[s.snack.room];
+      var item = C.snacks.items.filter(function (i) { return i.id === s.snack.item; })[0] || C.snacks.items[0];
+      var cur = state.snack && state.snack.room === s.snack.room && state.snack.item.id === s.snack.item ? state.snack : null;
+      if (!cur && s.snack.room === state.room) sfx("ding");
+      state.snack = cur || {};
+      state.snack.item = item; state.snack.room = s.snack.room; state.snack.surf = r.surfaces[s.snack.si] || r.surfaces[0];
+      state.snack.x = s.snack.x; state.snack.y = s.snack.y; state.snack.state = s.snack.state; state.snack.thief = s.snack.thief; state.snack.t = state.snack.t || 0;
+    } else state.snack = null;
+    state.treat = s.treat;
+    s.objs.forEach(function (q) {
+      var o = objById[q.id]; if (!o) return;
+      if (o.type === "cup") {
+        if (q.st === "broken" && o.state !== "broken") {
+          o.shards = []; for (var i = 0; i < 9; i++) o.shards.push({ dx: rnd(-0.035, 0.035), dy: rnd(-0.012, 0.012), a: rnd(0, 6.3), s: rnd(0.4, 1) });
+          if (o.room === state.room) sfx("crash");
+        }
+        o.state = q.st; o.fall = q.fall; o.brokenT = q.bt;
+      }
+      if (o.type === "toy") { o.x = q.x; o.y = q.y; o.spin = q.sp; }
+      o.marks = q.mk || null;
+      if (o.type === "tree") o.occupied = q.oc;
+      if (o.spots && q.spots) o.spots.forEach(function (sp, i) { sp.occupied = q.spots[i]; });
+    });
+    if (s.score !== state.score) { var d = s.score - state.score; state.score = s.score; scoreEl.textContent = s.score; if (s.score > state.best) { state.best = s.score; store.set("best", state.best); bestEl.textContent = state.best; } scoreEl.parentNode.classList.remove("bump", "bump-neg"); void scoreEl.parentNode.offsetWidth; scoreEl.parentNode.classList.add(d >= 0 ? "bump" : "bump-neg"); }
+    state.stats = s.stats; state.catStats = s.catStats; state.house = s.house; state.treatCooldown = s.tcd; state.controlled = s.ctl;
+    var hadRound = !!state.round;
+    if (s.round != null) { state.round = state.round || {}; state.round.left = s.round; timerEl.hidden = false; }
+    else if (hadRound) { endRound(); }
+    (s.ev || []).forEach(function (e) {
+      if (e.seq <= net.lastSeq) return;
+      net.lastSeq = e.seq;
+      if (e.k === "pop" && e.room === state.room) state.popups.push({ x: e.x, y: e.y, text: e.text, good: e.good, t: 0 });
+    });
+    netStatus();
+  }
+  setInterval(function () { if (net.on && net.role === "client" && !net.lostAt) netSend({ t: "ping" }); }, 1000);
+  function clientTick(dt) {
+    var nowC = performance.now();
+    if (net.on && !net.lostAt) {
+      if (net.lastRx && nowC - net.lastRx > 5000) { var oc = net.conn; net.conn = null; try { if (oc) oc.close(); } catch (e) {} clientLost(); }
+    }
+    var k = Math.min(1, dt * 12);
+    catIds.forEach(function (id) {
+      var c = cats[id];
+      if (c._tx != null) { c.x += (c._tx - c.x) * k; c.y += (c._ty - c.y) * k; }
+      if (c.bubble) { c.bubble.t -= dt; if (c.bubble.t <= 0) c.bubble = null; }
+      if (c.mode === "scuffle") c.phase += dt * 30;
+      else if (c.path.length) c.phase += dt * (11 + 6 * ((c.speedMul || 1) - 1));
+      else if (c.scratchT > 0) c.phase += dt * 20;
+      else if (c.mode === "roll") c.phase += dt * 6;
+      else if (c.perch) c.phase += dt * 4;
+    });
+    state.critters.forEach(function (q) { if (q._tx != null) { q.x += (q._tx - q.x) * k; q.y += (q._ty - q.y) * k; } });
+    if (state.round) {
+      var s2 = Math.max(0, Math.ceil(state.round.left));
+      timerEl.textContent = "\u23F1 " + Math.floor(s2 / 60) + ":" + ("0" + (s2 % 60)).slice(-2);
+    }
+    treatCd.textContent = state.treatCooldown > 0 ? Math.ceil(state.treatCooldown) : "";
+    treatBtn.classList.toggle("cooling", state.treatCooldown > 0);
+    updateDoorBadges();
+  }
+  // menu wiring
+  var netRole = "ollie";
+  function netMsg(t, bad) { var m = $("net-msg"); m.textContent = t; m.classList.toggle("bad", !!bad); }
+  Array.prototype.forEach.call(document.querySelectorAll("#net-roles button"), function (b) {
+    b.addEventListener("click", function () { netRole = b.dataset.role; Array.prototype.forEach.call(document.querySelectorAll("#net-roles button"), function (x) { x.classList.toggle("on", x === b); }); });
+  });
+  $("btn-net").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); helpEl.hidden = true; $("net").hidden = false; netMsg(""); });
+  $("btn-house").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startHouseMode(); });
+  $("net-back").addEventListener("click", function () { $("net").hidden = true; if (!net.on) showHelp(); });
+  $("net-host").addEventListener("click", function () {
+    unlockAudio(); netMsg("Starting\u2026");
+    hostGame(netRole, function (err, code) {
+      if (err) { netMsg(err, true); return; }
+      $("net").hidden = true; hideOverlays();
+      showToast("Code " + code + " \u2014 tell the other phones!");
+    });
+  });
+  $("net-join").addEventListener("click", function () {
+    unlockAudio(); netMsg("Joining\u2026");
+    joinGame($("net-code").value, netRole, function (err) {
+      if (err) { netMsg(err, true); return; }
+      $("net").hidden = true; hideOverlays();
+      showToast("Joined as " + roleName(net.myRole) + "!");
+    });
+  });
+  $("net-solo").addEventListener("click", function (e) { e.stopPropagation(); goSolo(); });
+  window.addEventListener("pagehide", function () { try { if (net.role === "client") netSend({ t: "bye" }); } catch (e) {} });
+
   /* ---------- round mode / help ---------- */
   function startRound() {
     state.round = { left: +(params.get("roundsecs") || C.round.seconds) };
     state.score = 0; state.stats = newStats(); state.catStats = newCatStats();
+    var keepCharges = state.house; houseReset(); if (!houseActive()) state.house = keepCharges;
     addScore(0);
     timerEl.hidden = false;
     hideOverlays();
@@ -1354,7 +1990,7 @@
   $("help-btn").addEventListener("click", function (e) { e.stopPropagation(); showHelp(); });
   $("btn-free").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startFree(); });
   $("btn-round").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startRound(); });
-  $("btn-again").addEventListener("click", function () { startRound(); });
+  $("btn-again").addEventListener("click", function () { if (net.role === "client") { hideOverlays(); return; } startRound(); });
   $("btn-free2").addEventListener("click", function () { startFree(); });
   function updateRound(dt) {
     if (!state.round) return;
@@ -1458,7 +2094,7 @@
     ctx.ellipse(sp[0], sp[1] - h * sh.y, w * sh.w, Math.max(2, h * sh.h), 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-    if (cat.id === state.selected && !cat.air && !cat.perch) {
+    if (cat.id === state.selected && state.role !== "house" && !cat.air && !cat.perch) {
       ctx.save();
       ctx.strokeStyle = "rgba(255,230,120,0.85)";
       ctx.lineWidth = Math.max(2, base * 0.02);
@@ -1852,8 +2488,12 @@
   function frame(now) {
     var dt = Math.min(0.05, (now - last) / 1000);
     last = now;
+    var rdt = dt;
     try {
-      if (!state.paused) {
+      if (net.on && net.role === "client") { if (!state.paused) clientTick(dt); else dt = 0; }
+      else if (!state.paused) {
+        updateHouse(dt);
+        if (net.on) hostBroadcast(dt);
         updateRound(dt);
         updateAI(dt);
         updateCritters(dt);
@@ -1863,6 +2503,12 @@
         catIds.forEach(function (id) { updateCat(cats[id], dt); });
         updateCatButtons();
       } else dt = 0;
+      updateCatButtons();
+      followMyCat();
+      updateCamera(dt);
+      updateDolly(rdt);
+      updateHouseUI();
+      updateMap();
       ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
       drawBackground();
       if (DEBUG) drawDebug();
@@ -1949,6 +2595,11 @@
     if (s === "spider" || s === "mouse") setTimeout(function () { spawnCritter(s, state.room); }, 600);
     if (s === "snack") setTimeout(spawnSnack, 600);
   });
+  // multiplayer / house test switches: ?house=1, ?host=ollie|stanley|house[&code=ABCD], ?join=ABCD&role=stanley
+  buildHouseBar();
+  if (params.get("house") === "1") setTimeout(startHouseMode, 50);
+  if (params.get("host")) setTimeout(function () { hostGame(params.get("host"), function (err, code) { window.__netResult = err || ("host:" + code); if (!err) showToast("Code " + code); }, params.get("code")); }, 300);
+  if (params.get("join")) setTimeout(function () { joinGame(params.get("join"), params.get("role") || "stanley", function (err) { window.__netResult = err || ("joined:" + net.myRole); }); }, 300);
   var seen = store.get("seenHelp", 0);
   if (params.get("round") === "1") startRound();
   else if (params.get("nohelp") === "1" || seen) hideOverlays();
@@ -1964,6 +2615,7 @@
     selectCat: selectCat, moveCat: function (id, roomId) { var c = cats[id], f = c.room; placeCat(c, roomId, f); if (id === state.selected) setView(roomId); lastBadgeKey = ""; },
     sendCat: function (id, to) { var c = cats[id], d = (R(c).doors || []).filter(function (x) { return x.to === to; })[0]; if (d) aiTravel(c, d); return !!d; },
     audio: CatAudio, audioPrefs: function () { return audioPrefs; },
+    net: net, act: act, hostGame: hostGame, joinGame: joinGame, goSolo: goSolo, startHouseMode: startHouseMode, setHouseTool: setHouseTool, houseAct: houseAct, cam: cam, dolly: function () { return dolly ? { phase: dolly.phase, t: dolly.t, z: dollyZoom() } : null; },
     goTo: function (to) { var d = (room().doors || []).filter(function (x) { return x.to === to; })[0]; if (d) goTo(d); return !!d; }
   };
 

@@ -23,6 +23,7 @@
     <div id="hotspots"></div>
     <div id="hud-top">
       <div id="score-pill"><span class="star">&#x2B50;</span> <b id="score-val">0</b><span class="best">Best <span id="best-val">0</span></span></div>
+      <div id="house-pill" hidden>&#x1F3E0; <b id="house-val">0</b></div>
       <div id="round-timer" hidden>&#x23F1; 3:00</div>
     </div>
     <button id="help-btn" aria-label="How to play">?</button>
@@ -36,6 +37,11 @@
       <input type="range" id="aud-fx-vol" min="0" max="100" step="1" aria-label="Sound effects volume">
       <p class="note">iPhone: the silent switch mutes the game.</p>
     </div>
+    <div id="house-bar" hidden></div>
+    <button id="map-btn" hidden aria-label="House map">&#x1F5FA;&#xFE0F;</button>
+    <div id="map" hidden></div>
+    <div id="net-status" hidden></div>
+    <div id="net-banner" hidden><span id="net-banner-text"></span> <button id="net-solo" hidden>Play on this phone</button></div>
     <div id="room-toast"></div>
     <div id="warn"></div>
     <div id="fade"></div>
@@ -51,12 +57,35 @@
           <li>&#x1F63E; Stanley chases Ollie! Escape (+5) or get caught (&minus;10).</li>
           <li>&#x1F36A; <b>Treat</b> button, then tap the floor: the nearest cat runs to it (+2).</li>
           <li>&#x1F4A4; Leave a cat alone and it naps for points (double in a &#x2600;&#xFE0F; sunny spot).</li>
-          <li>&#x1F333; Tap things: the cat tree (+5), toy mice (+1)&hellip; or be naughty with cups and the couch (&minus;5).</li>
+          <li>&#x2728; Tap sparkly things: sofas, benches, stairs and the cat tree (+5) to hop up; toy mice (+1); or be naughty with cups and the couch arm (&minus;5).</li>
         </ul>
         <div class="btns">
           <button id="btn-free">Free Play</button>
           <button id="btn-round" class="primary">3-Minute Round</button>
         </div>
+        <div class="btns small">
+          <button id="btn-house">&#x1F3E0; Be the House</button>
+          <button id="btn-net">&#x1F4F1; Play with 2&ndash;3 phones</button>
+        </div>
+      </div>
+    </div>
+    <div id="net" class="overlay" hidden>
+      <div class="card">
+        <h1>Play with 2&ndash;3 phones</h1>
+        <p class="sub">Pick who you are. One phone hosts and gets a code; the others type it in. Nobody picked? The cats play themselves.</p>
+        <div id="net-roles">
+          <button data-role="ollie" class="on"><img src="assets/cats/ollie-face.png" alt=""><span>Ollie</span></button>
+          <button data-role="stanley"><img src="assets/cats/stanley-face.png" alt=""><span>Stanley</span></button>
+          <button data-role="house"><b>&#x1F3E0;</b><span>House</span></button>
+        </div>
+        <div class="btns">
+          <button id="net-host" class="primary">Host a game</button>
+          <span class="or">or</span>
+          <input id="net-code" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <button id="net-join">Join</button>
+        </div>
+        <p id="net-msg"></p>
+        <div class="btns"><button id="net-back">Back</button></div>
       </div>
     </div>
     <div id="summary" class="overlay" hidden>
@@ -86,6 +115,7 @@
   <script src="js/config.js"></script>
   <script src="js/sprites.js"></script>
   <script src="js/audio.js"></script>
+  <script src="js/vendor/peerjs.min.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

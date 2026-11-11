@@ -32,6 +32,31 @@ Chrome: menu > Add to Home screen / Install app).
   mutes the game (audio session "ambient").
 - Test switches: `noroam=1`, `noaiobj=1`, `nohunt=1`, `roam=N` (seconds between roam checks).
 
+## v3 (part B)
+
+- **Camera.** The room photo is shown slightly zoomed (`camera.zoom` 1.15) and gently pans to keep
+  your cat centred. `?nopan=1` turns it off.
+- **Doorway transitions.** Going through a door pushes the camera into that doorway, dips, then pulls
+  back out of the matching doorway in the next room (drawn from the room photos, no download).
+  `?nodolly=1` or the phone's "reduce motion" setting uses a plain fade instead. Real walkthrough
+  video clips were planned but the source clips weren't available; see "Limitations".
+- **House mode (1 phone).** "Be the House" on the help card: both cats run on AI and you get the
+  House toolbar (treat, spider, mouse, snack, toy) with cooldowns/charges, a map button showing where
+  each cat is, and free room switching. House scores when cats take its treats/snacks (+3/+5), catch
+  its critters quickly (+10) or chase its toys (+1).
+- **Play with 2-3 phones.** "Play with 2–3 phones" on the help card. One phone hosts and gets a 4-letter
+  code, the others type the code and pick a role: **Ollie**, **Stanley** or **The House**. Empty roles
+  are played by the AI. The host phone runs the game; the others send taps and get a snapshot 10x a
+  second. Each cat phone follows its own cat; the score is shared, with per-cat stats and a House
+  score. If a phone drops it reconnects automatically (same role). If the host goes away, the others
+  get "Play on this phone" and carry on solo from where they were.
+  - Uses [PeerJS](https://peerjs.com) 1.5.4 (vendored, MIT, `js/vendor/`) with the free public PeerJS
+    signalling server, then a direct WebRTC data channel between phones.
+  - **Limitation:** there is no TURN relay server. Phones on the same Wi-Fi almost always connect;
+    phones on different networks (especially cellular / strict NAT) may fail with "Couldn't reach
+    the host". The public signalling server can also be down occasionally.
+- Test switches: `house=1` (House mode), `host=<role>&code=ABCD`, `join=ABCD&role=<role>`.
+
 ## v2 gameplay
 * **Score** (top centre) with +N / -N popups; best score is saved on the device.
 * **Critters**: a spider (drops down on a thread) or a mouse (runs in from a door) shows up now and then.
