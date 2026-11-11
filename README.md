@@ -13,6 +13,30 @@ Chrome: menu > Add to Home screen / Install app).
 * When you're not controlling Stanley, he sometimes hisses and chases Ollie. Ollie runs away, and if Stanley catches him there's a quick scuffle.
 * Speaker button (top-right) turns the synthesized sound effects on. Sound starts off.
 
+## v2 gameplay
+* **Score** (top centre) with +N / -N popups; best score is saved on the device.
+* **Critters**: a spider (drops down on a thread) or a mouse (runs in from a door) shows up now and then.
+  Walk a cat onto it: spider +10, mouse +25. A red door badge shows a critter in another room.
+* **Counter snacks** (Kitchen, Kitchen Walkway, Dining table): a cat "eyes" the food, walks over and
+  jumps up. Tap the food first to put it away (+3); if the cat gets it: "Bad kitty!" -15.
+* **Chase**: Stanley catching Ollie -10; escaping +5 (if you're playing Ollie, steer him away!).
+* **Treat** button (20 s cooldown), then tap the floor: the nearest cat runs over (+2); distracts Stanley.
+* **Naps**: a cat left alone ~18 s curls up and earns +1 every 4 s. Tap it to wake it.
+* **3-minute round** with a summary screen, or **Free Play**. "?" shows the how-to-play card.
+* Score never goes below 0.
+
+All tunables are in `js/config.js` (`scoring`, `critters`, `snacks`, `treat`, `nap`, `round`) and
+snack spots are per-room `surfaces` polygons with the floor point (`from`) the cat jumps up from.
+
+## Cat animation
+Sprites come from AI-generated sprite sheets in `sheets/` (side view, white background).
+`python3 tools/cut_sheets.py` cuts them out (rembg), aligns the 4 walk frames on the feet and
+body centre, and writes `assets/cats/<cat>/{walk-0..3,sit,pounce,nap}.png` + `js/sprites.js`.
+States: walk (ping-pong frames + a hip-pivot leg swing), run (same, faster and wider), sit (idle),
+pounce (crouch then hop when catching, and when eating on the counter), nap (curled).
+`rel` in config sets each pose's height vs. a sitting cat (from measuring head size on the sheets).
+The face buttons still use the real photos.
+
 ## Files
 ```
 index.html            page shell, PWA meta tags
@@ -23,9 +47,10 @@ js/config.js          ALL room + cat data (floors, depth, doors)
 js/game.js            engine (rendering, pathing, AI, sound)
 assets/rooms/1920/    room photos (phones with big screens)
 assets/rooms/1280/    same photos, smaller (used on low-res screens)
-assets/cats/          sprites (name.png) + round face buttons (name-face.png)
+assets/cats/          animation frames (stanley/, ollie/) + round photo face buttons
 rooms/                original 3840x2160 frames pulled from the house videos
-tools/                cut_cats.py, placeholder_cats.py, make_icons.py, serve.sh
+tools/                cut_sheets.py, cut_cats.py, make_icons.py, serve.sh
+sheets/               AI sprite sheets (source art for the cat animations)
 tests/test_game.py    Playwright end-to-end test
 ```
 
@@ -65,6 +90,9 @@ Then run `python3 tools/make_icons.py` to refresh the app icons.
 * `?debug=1`: floor polygons, tap coordinates, and Stanley's chase timer cut to 2-3 s
 * `?room=kitchen`: start in a room
 * `?res=1280|1920`: force photo size
+* `?spawn=spider,mouse,snack`: spawn those in the start room right away
+* `?nohelp=1` skip the how-to card; `?round=1&roundsecs=20` start a short round
+* `?nochase=1`, `?nocritters=1`, `?nosnacks=1`, `?napafter=3`: switch features off / speed naps up
 
 ## Hosting
 `tools/serve.sh` starts `tools/catgame_server.py` on port 8765 (correct MIME types,

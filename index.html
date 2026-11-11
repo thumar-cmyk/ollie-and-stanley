@@ -21,17 +21,60 @@
   <div id="app">
     <canvas id="game" aria-label="Tap the floor to walk"></canvas>
     <div id="hotspots"></div>
+    <div id="hud-top">
+      <div id="score-pill"><span class="star">&#x2B50;</span> <b id="score-val">0</b><span class="best">Best <span id="best-val">0</span></span></div>
+      <div id="round-timer" hidden>&#x23F1; 3:00</div>
+    </div>
+    <button id="help-btn" aria-label="How to play">?</button>
     <div id="cat-buttons" role="group" aria-label="Choose a cat"></div>
+    <button id="treat-btn" aria-label="Drop a treat"><span class="ico">&#x1F36A;</span><span class="txt">Treat</span><span id="treat-cd"></span></button>
     <button id="sound-btn" aria-label="Sound off">&#x1F507;</button>
     <div id="room-toast"></div>
+    <div id="warn"></div>
     <div id="fade"></div>
     <div id="debug-info" hidden></div>
+
+    <div id="help" class="overlay" hidden>
+      <div class="card">
+        <h1>Ollie &amp; Stanley</h1>
+        <ul>
+          <li>&#x1F43E; Tap a cat (or its face) to pick it, then <b>tap the floor</b> to walk.</li>
+          <li>&#x1F577;&#xFE0F; &#x1F42D; <b>Catch critters</b>: walk onto spiders (+10) and mice (+25). A badge on a door means one is in that room.</li>
+          <li>&#x1F41F; Food on the counter? <b>Tap it</b> to put it away (+3) before a cat steals it (&minus;15).</li>
+          <li>&#x1F63E; Stanley chases Ollie! Escape (+5) or get caught (&minus;10).</li>
+          <li>&#x1F36A; <b>Treat</b> button, then tap the floor: the nearest cat runs to it (+2).</li>
+          <li>&#x1F4A4; Leave a cat alone and it naps for bonus points. Tap to wake.</li>
+        </ul>
+        <div class="btns">
+          <button id="btn-free">Free Play</button>
+          <button id="btn-round" class="primary">3-Minute Round</button>
+        </div>
+      </div>
+    </div>
+    <div id="summary" class="overlay" hidden>
+      <div class="card">
+        <h1>Time's up!</h1>
+        <div class="big">&#x2B50; <span id="sum-score">0</span></div>
+        <table>
+          <tr><td>Best score</td><td id="sum-best"></td></tr>
+          <tr><td>Critters caught</td><td id="sum-critters"></td></tr>
+          <tr><td>Snacks</td><td id="sum-snacks"></td></tr>
+          <tr><td>Chases</td><td id="sum-chases"></td></tr>
+          <tr><td>Treats eaten</td><td id="sum-treats"></td></tr>
+        </table>
+        <div class="btns">
+          <button id="btn-free2">Free Play</button>
+          <button id="btn-again" class="primary">Play Again</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div id="rotate">
     <div class="phone">&#x1F4F1;</div>
     <p>Turn your phone sideways<br>to play with Ollie &amp; Stanley!</p>
   </div>
   <script src="js/config.js"></script>
+  <script src="js/sprites.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

@@ -1,13 +1,16 @@
 /* Offline cache. Bump CACHE when files change so phones pick up the update. */
-const CACHE = "catgame-v1-2";
+const CACHE = "catgame-v2-1";
 const CORE = [
   "./", "./index.html", "./manifest.json", "./css/style.css",
   "./js/config.js", "./js/game.js",
-  "./assets/cats/stanley.png", "./assets/cats/ollie.png",
+  "./js/sprites.js",
   "./assets/cats/stanley-face.png", "./assets/cats/ollie-face.png",
   "./assets/icons/icon-192.png", "./assets/icons/icon-512.png",
   "./assets/icons/apple-touch-icon.png", "./assets/icons/favicon-32.png"
 ];
+const CATS = ["stanley", "ollie"].flatMap((c) =>
+  ["walk-0", "walk-1", "walk-2", "walk-3", "sit", "pounce", "nap"].map((f) => `./assets/cats/${c}/${f}.png`));
+CORE.push(...CATS);
 const ROOMS = ["hallway","living-room","stairway","kitchen","kitchen-toward-dining","dining-room","pantry","mudroom"];
 
 self.addEventListener("install", (e) => {
