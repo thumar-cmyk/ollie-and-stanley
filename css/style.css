@@ -110,7 +110,7 @@ button { font: inherit; touch-action: manipulation; cursor: pointer; }
 #warn {
   position: absolute; left: 50%; top: calc(96px + env(safe-area-inset-top)); transform: translate(-50%, -10px);
   background: rgba(255,250,235,.95); color: #4a2410; border-radius: 14px; padding: 6px 16px;
-  font-weight: bold; font-size: 16px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none;
+  font-weight: bold; font-size: 16px; opacity: 0; transition: opacity .25s, transform .25s; pointer-events: none; z-index: 5;
   max-width: 56vw; text-align: center; box-shadow: 0 3px 10px rgba(0,0,0,.4);
 }
 #warn.show { opacity: 1; transform: translate(-50%, 0); }
