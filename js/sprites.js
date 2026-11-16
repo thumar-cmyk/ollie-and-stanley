@@ -67,3 +67,4 @@ window.CAT_SPRITES = {
   }
  }
 };
+window.CAT_SPRITES.freddy = {"run": {"frames": ["assets/freddy/run-0.png", "assets/freddy/run-1.png", "assets/freddy/run-2.png", "assets/freddy/run-3.png"], "w": 292, "h": 190}, "bark": {"frames": ["assets/freddy/bark.png"], "w": 360, "h": 280}, "bow": {"frames": ["assets/freddy/bow.png"], "w": 360, "h": 306}};

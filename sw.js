@@ -1,5 +1,5 @@
 /* Offline cache. Bump CACHE when files change so phones pick up the update. */
-const CACHE = "catgame-v4-1";
+const CACHE = "catgame-v4-2";
 const CORE = [
   "./", "./index.html", "./manifest.json", "./css/style.css",
   "./js/config.js", "./js/audio.js", "./js/vendor/peerjs.min.js", "./js/game.js",
@@ -11,6 +11,7 @@ const CORE = [
 const CATS = ["stanley", "ollie"].flatMap((c) =>
   ["walk-0", "walk-1", "walk-2", "walk-3", "sit", "pounce", "nap"].map((f) => `./assets/cats/${c}/${f}.png`));
 CORE.push(...CATS);
+CORE.push(...["run-0", "run-1", "run-2", "run-3", "bark", "bow"].map((f) => `./assets/freddy/${f}.png`));
 const ROOMS = ["hallway","living-room","stairway","kitchen","kitchen-toward-dining","dining-room","pantry","mudroom"];
 
 self.addEventListener("install", (e) => {

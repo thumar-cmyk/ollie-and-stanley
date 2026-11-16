@@ -33,6 +33,18 @@ Nehas found v3 too busy, so v4 keeps all the features but shows one thing at a t
 * `?busy=1` brings back the v3 behaviour (roaming, independent timers, all bubbles), `?pan=1` the camera pan,
   `?dolly=1` the doorway zoom, `?hints=1` the sparkles and the "upstairs" hint. `?gap=N` sets the event gaps (testing).
 
+## Freddy the dog (v4.2)
+
+Freddy (a cream curly poodle mix in a blue plaid bandana) used to chase the cats. Now he visits now and then:
+
+- **Rare.** Never in the first minute, then about every 2–4 minutes, and only when nothing else is happening.
+- **What happens:** he bursts in through the door farthest from the cats ("Freddy! 🐶 Run!"). The cats puff up and shake with a "!", then run. He chases the nearest cat for 8–12 s and trots out a door.
+- **Scoring:** a caught cat tumbles (−5, no game over). Staying safe earns up to +12 when he leaves. Tap Freddy to shoo him for +8.
+- **Music:** while he's out the theme ducks and a fast, staccato slapstick track plays (made live with WebAudio). It crossfades back when he leaves. The Music switch in the menu turns both off.
+- **House** has a 🐶 Freddy tool with a 150 s cooldown. In multiplayer the host runs him and the other phones see him in the snapshot.
+- Sprites live in `sheets/freddy-*.jpg` and are cut by `tools/cut_freddy.py` into `assets/freddy/`. Tune him in `GAME_CONFIG.freddy`.
+- **Test params:** `?freddy=N` (seconds until he first appears) and `?nofreddy=1`.
+
 ## v3 (part A)
 
 - **Each cat lives its own life.** Only the selected cat goes through a door; the other stays put and

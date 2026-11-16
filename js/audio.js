@@ -55,7 +55,7 @@ window.CatAudio = (function () {
       var p = el.play();
       if (p && p.catch) p.catch(function (e) { A.songErr = String(e && e.name || e); });
     }
-    ramp(A.songBus.gain, A.musicVol, 2.5);       // gentle fade-in
+    ramp(A.songBus.gain, A.freddyOn ? A.musicVol * 0.08 : A.musicVol, A.freddyOn ? 0.5 : 2.5);       // gentle fade-in (ducked under Freddy's music)
   }
   function songStop(fade) {
     if (!A.song || !A.ctx) return;
@@ -69,16 +69,17 @@ window.CatAudio = (function () {
     if (A.ctx.state === "suspended") A.ctx.resume();
     // iOS: play a silent buffer inside the gesture
     try { var b = A.ctx.createBuffer(1, 1, 22050), s = A.ctx.createBufferSource(); s.buffer = b; s.connect(A.ctx.destination); s.start(0); } catch (e) {}
-    if (A.musicOn) startMusic();
+    if (A.musicOn) { startMusic(); if (A.freddyOn) chaosStart(); }
   }
   function ramp(param, v, t) { var now = A.ctx.currentTime; param.cancelScheduledValues(now); param.setValueAtTime(param.value, now); param.linearRampToValueAtTime(v, now + (t || 0.3)); }
   function setMusic(on, vol) {
     A.musicOn = !!on; if (vol != null) A.musicVol = vol;
     if (!A.ctx) { if (on) unlock(); return; }
     if (!A.synth) {
-      if (A.musicOn) songPlay(); else songStop();
+      if (A.musicOn) { songPlay(); if (A.freddyOn) chaosStart(); } else { songStop(); chaosStop(0.3); }
       return;
     }
+    if (!A.musicOn) chaosStop(0.3); else if (A.freddyOn) chaosStart();
     ramp(A.musicBus.gain, A.musicOn ? A.musicVol * 0.5 : 0, 0.6);
     if (A.musicOn) startMusic();
   }
@@ -133,6 +134,91 @@ window.CatAudio = (function () {
       while (A.nextBar < A.ctx.currentTime + 1.5) { scheduleBar(A.nextBar, A.bar++); A.nextBar += BAR; }
     }, 300);
     ramp(A.musicBus.gain, A.musicVol * 0.5, 1.5);
+  }
+
+
+  /* ---------- Freddy's chase music: fast, staccato, slapstick (original, generated live) ---------- */
+  var CH = { on: false, timer: 0, next: 0, step: 0, bus: null, motif: 0 };
+  var CBPM = 172, S16 = 60 / CBPM / 4;
+  // bass (oom-pah, root/fifth) per bar: I - bVI - IV - V in C minor-ish
+  var CBASS = [[36, 43], [32, 39], [41, 36], [43, 38]];
+  var MOTIFS = [
+    [72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, -1, 84, -1],          // chromatic run up
+    [84, 83, 82, 81, 80, 79, 78, 77, 76, 75, 74, 73, 72, -1, 67, -1],          // run down
+    [79, 78, 79, 78, 79, -1, 84, -1, 79, 78, 79, 78, 79, -1, 72, -1],          // buzzy zig-zag
+    [72, -1, 72, 75, -1, 72, 78, -1, 77, -1, 75, -1, 72, 71, 72, -1],          // sneaky stabs
+    [76, 79, 84, 79, 76, 79, 84, 79, 77, 81, 86, 81, 77, 81, 86, 88]           // panicky arpeggios
+  ];
+  function cnote(type, freq, t, dur, vol, cut) {
+    var c = A.ctx, o = c.createOscillator(), g = c.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    if (cut) { var f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = cut; o.connect(f); f.connect(g); } else o.connect(g);
+    g.connect(CH.bus); o.start(t); o.stop(t + dur + 0.02);
+  }
+  function cnoise(t, dur, vol, freq, type) {
+    var c = A.ctx, buf = c.createBuffer(1, Math.floor(c.sampleRate * dur), c.sampleRate), d = buf.getChannelData(0);
+    for (var i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+    var s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    s.buffer = buf; f.type = type || "highpass"; f.frequency.value = freq; g.gain.value = vol;
+    s.connect(f); f.connect(g); g.connect(CH.bus); s.start(t);
+  }
+  function slide(t, up) {   // slide whistle
+    var c = A.ctx, o = c.createOscillator(), g = c.createGain();
+    o.type = "sine"; o.frequency.setValueAtTime(up ? 600 : 1800, t); o.frequency.exponentialRampToValueAtTime(up ? 1800 : 500, t + 0.45);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.12, t + 0.05); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    o.connect(g); g.connect(CH.bus); o.start(t); o.stop(t + 0.55);
+  }
+  function chaosStep(t, i) {
+    var bar = Math.floor(i / 16), k = i % 16, b = CBASS[bar % 4];
+    if (k === 0) CH.motif = (bar % 4 === 3) ? 2 : Math.floor(Math.random() * MOTIFS.length);
+    if (k % 4 === 0) cnote("square", mtof(b[0]), t, 0.11, 0.22, 900);            // oom
+    if (k % 4 === 2) cnote("square", mtof(b[1] + 12), t, 0.08, 0.13, 1400);      // pah
+    var m = MOTIFS[CH.motif][k];
+    if (m > 0) cnote("triangle", mtof(m + (bar % 4 === 1 ? -4 : bar % 4 === 2 ? 5 : 0)), t, 0.07, 0.2);   // xylophone-ish staccato
+    if (m > 0 && k % 2 === 0) cnote("square", mtof(m + 12), t, 0.04, 0.035, 3000);
+    if (k % 8 === 4) cnoise(t, 0.12, 0.35, 1500, "bandpass");                    // snare on 2 and 4
+    if (k % 2 === 0) cnoise(t, 0.03, 0.12, 7000);                               // hats
+    if (k === 12 && bar % 4 === 3) slide(t, bar % 8 === 3);
+    if (k === 0 && bar % 2 === 1) { cnote("square", mtof(b[0] + 24), t, 0.05, 0.08, 4000); cnote("square", mtof(b[0] + 27), t + 0.02, 0.05, 0.08, 4000); } // honk
+  }
+  function chaosStart() {
+    if (!A.ctx || !A.musicOn || document.hidden) return;
+    if (!CH.bus) { CH.bus = A.ctx.createGain(); CH.bus.gain.value = 0; CH.bus.connect(A.master); }
+    ramp(CH.bus.gain, A.musicVol * 1.1, 0.5);
+    if (A.song && A.songBus) ramp(A.songBus.gain, A.musicVol * 0.08, 0.5);       // duck the theme
+    if (A.synth) ramp(A.musicBus.gain, 0, 0.5);
+    if (CH.timer) return;
+    CH.next = A.ctx.currentTime + 0.08; CH.step = 0;
+    CH.timer = setInterval(function () {
+      if (!A.ctx) return;
+      while (CH.next < A.ctx.currentTime + 0.25) { chaosStep(CH.next, CH.step++); CH.next += S16; }
+    }, 60);
+  }
+  function chaosStop(fade) {
+    if (!CH.bus) return;
+    ramp(CH.bus.gain, 0, fade || 1.2);
+    var tm = CH.timer; CH.timer = 0;
+    setTimeout(function () { if (tm) clearInterval(tm); }, (fade || 1.2) * 1000 + 100);
+    if (A.musicOn && !document.hidden) {
+      if (A.synth) ramp(A.musicBus.gain, A.musicVol * 0.5, 1.5);
+      else if (A.song && !A.song.paused) ramp(A.songBus.gain, A.musicVol, 1.8);   // crossfade back to the theme
+      else songPlay();
+    }
+  }
+  function freddyMusic(on) {
+    A.freddyOn = !!on;
+    if (!A.ctx) return;
+    if (on) chaosStart(); else chaosStop();
+  }
+  function bark(delay) {
+    var c = A.ctx, t = c.currentTime + (delay || 0);
+    var o = c.createOscillator(), g = c.createGain(), f = c.createBiquadFilter();
+    o.type = "sawtooth"; o.frequency.setValueAtTime(520, t); o.frequency.exponentialRampToValueAtTime(820, t + 0.03); o.frequency.exponentialRampToValueAtTime(380, t + 0.13);
+    f.type = "bandpass"; f.frequency.value = 1100; f.Q.value = 2.5;
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.5, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    o.connect(f); f.connect(g); g.connect(A.fxBus); o.start(t); o.stop(t + 0.17);
+    noise(0.08, 0.12, 1500, "bandpass", delay || 0);
   }
 
   /* ---------- effects ---------- */
@@ -219,6 +305,9 @@ window.CatAudio = (function () {
         case "door": tone("sine", 300, 600, 0.18, 0.06); tone("sine", 450, 900, 0.18, 0.05, 0.1); break;
         case "boop": tone("sine", 400, 300, 0.15, 0.07); break;
         case "hiss": noise(0.7, 0.22, 3200); break;
+        case "bark": bark(0); bark(0.2); break;
+        case "whine": tone("sine", 900, 1400, 0.18, 0.05); tone("sine", 1300, 700, 0.3, 0.05, 0.16); break;
+        case "tumble": tone("sine", 500, 160, 0.25, 0.06); noise(0.15, 0.08, 900, "lowpass", 0.05); break;
         case "scuffle": noise(0.35, 0.18, 1200); tone("square", 300, 120, 0.25, 0.03, 0.05); break;
         case "catch": tone("triangle", 600, 1200, 0.1, 0.1); tone("triangle", 900, 1600, 0.12, 0.08, 0.09); break;
         case "squeak": tone("sine", 2000, 2600, 0.06, 0.05); tone("sine", 2200, 2800, 0.06, 0.05, 0.1); break;
@@ -246,9 +335,9 @@ window.CatAudio = (function () {
   // pause when the app is hidden (home button, lock screen, other tab); resume when back
   document.addEventListener("visibilitychange", function () {
     if (!A.ctx) return;
-    if (document.hidden) { if (A.song) { A.song.pause(); A.songBus.gain.value = 0; } }
-    else if (A.musicOn && !A.synth) { if (A.ctx.state === "suspended") A.ctx.resume(); songPlay(); }
+    if (document.hidden) { if (A.song) { A.song.pause(); A.songBus.gain.value = 0; } if (CH.timer) { clearInterval(CH.timer); CH.timer = 0; if (CH.bus) CH.bus.gain.value = 0; } }
+    else if (A.musicOn && !A.synth) { if (A.ctx.state === "suspended") A.ctx.resume(); songPlay(); if (A.freddyOn) chaosStart(); }
   });
   window.addEventListener("pagehide", function () { if (A.song) A.song.pause(); });
-  return { unlock: unlock, setMusic: setMusic, setFx: setFx, sfx: sfx, cat: cat, state: A };
+  return { unlock: unlock, setMusic: setMusic, setFx: setFx, sfx: sfx, cat: cat, freddyMusic: freddyMusic, chaos: CH, state: A };
 })();

@@ -93,6 +93,22 @@ window.GAME_CONFIG = {
     gap: [20, 40],           // calm seconds between events
     weights: { critter: 5, snack: 3, chase: 2 }
   },
+  /* Freddy the dog: rare visitor who chases the cats (sprites: assets/freddy, tools/cut_freddy.py) */
+  freddy: {
+    first: 60,               // seconds before he can first appear (?freddy=N overrides)
+    gap: [120, 240],         // then every 2-4 minutes, only when nothing else is going on
+    chase: [8, 12],          // seconds he chases before trotting off
+    height: 1.0,             // vs. a sitting cat at the same spot
+    speed: 0.47,             // a bit slower than a fleeing cat, so you can get away
+    catRun: 0.58,            // cats' speed while Freddy is out
+    reach: 0.045,            // how close counts as "caught"
+    points: { caught: -5, safePerSec: 1, safeMax: 12, shoo: 8 },
+    states: {
+      run:  { rel: 1.10, faces: 1, shadow: { y: 0.02, w: 0.34, h: 0.07 }, legs: { hipY: 0.62, split: 0.5, swing: 0.045 } },
+      bark: { rel: 1.08, faces: 1, shadow: { y: 0.02, w: 0.36, h: 0.06 } },
+      bow:  { rel: 1.00, faces: 1, shadow: { y: 0.02, w: 0.38, h: 0.07 } }
+    }
+  },
   follow: { delay: [1.2, 2.4], near: 0.32 },  // the other cat follows you into rooms, and stays loosely nearby
   transition: { ms: 300, push: 1.05 },         // quick crossfade between rooms, with a slight push
   /* House player (game master): tools with cooldowns (cd, seconds) or charges that recharge */
@@ -102,9 +118,10 @@ window.GAME_CONFIG = {
       spider: { icon: "\uD83D\uDD77\uFE0F", label: "Spider", charges: 3, recharge: 20 },
       mouse:  { icon: "\uD83D\uDC2D", label: "Mouse",  charges: 2, recharge: 30 },
       snack:  { icon: "\uD83D\uDC1F", label: "Snack",  charges: 1, recharge: 30 },
-      toy:    { icon: "\uD83E\uDDF8", label: "Toy",    cd: 4 }
+      toy:    { icon: "\uD83E\uDDF8", label: "Toy",    cd: 4 },
+      freddy: { icon: "\uD83D\uDC36", label: "Freddy", cd: 150 }
     },
-    points: { treat: 3, critterFast: 10, snack: 5, toy: 1 }   // critter: 10 if caught at once, -1 per 3 s (min 2)
+    points: { treat: 3, critterFast: 10, snack: 5, toy: 1, freddy: 5 }   // critter: 10 if caught at once, -1 per 3 s (min 2)
   },
   audio: { music: 0.3, effects: 0.5 },   // v4: music off by default (menu), cat sounds quieter
   nap: { after: 18, sunAfter: 1.5 },  // idle seconds before a cat curls up (sun spots: almost right away)

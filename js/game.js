@@ -554,7 +554,7 @@
     }
     return best;
   }
-  function busy(cat) { return cat.air || cat.perch || cat.snackGoal || cat.treatGoal || cat.task || cat.doorGoal || cat.mode === "scuffle"; }
+  function busy(cat) { return cat.air || cat.perch || cat.snackGoal || cat.treatGoal || cat.task || cat.doorGoal || cat.mode === "scuffle" || cat.mode === "tumble"; }
   function startChase() {
     var st = cats.stanley, ol = cats.ollie;
     if (!st || !ol || busy(st) || busy(ol) || st.room !== ol.room || st.room !== state.room) return false;
@@ -624,10 +624,18 @@
   var director = { gap: C.events.first, last: null };
   function eventActive() {
     var st = cats.stanley;
-    return state.critters.some(function (k) { return !k.caught; }) || !!state.snack || !!(st && (st.mode === "chase" || st.mode === "scuffle"));
+    return state.critters.some(function (k) { return !k.caught; }) || !!state.snack || !!(st && (st.mode === "chase" || st.mode === "scuffle")) || !!state.freddy;
   }
   function updateDirector(dt) {
     if (!CALM || houseActive() || state.transitioning) return;
+    // Freddy has his own (long) clock and only shows up when nothing else is happening
+    if (!state.freddy && params.get("nofreddy") !== "1") {
+      state.freddyT -= dt;
+      if (state.freddyT <= 0 && !eventActive()) {
+        if (catsOnFloor(state.room).length && startFreddy(state.room)) { director.last = "freddy"; return; }
+        state.freddyT = 3;
+      }
+    }
     if (eventActive()) { director.gap = rnd(C.events.gap[0], C.events.gap[1]); return; }
     director.gap -= dt;
     if (director.gap > 0) return;
@@ -662,6 +670,7 @@
       return;
     }
     o.followT = null;
+    if (state.freddy && state.freddy.room === o.room) return;
     if (o.mode !== "idle" || busy(o) || o.path.length || me.air || me.perch) return;
     if (hdist([o.x, o.y], [me.x, me.y]) < C.follow.near) { o.nearT = null; return; }
     if (o.nearT == null) o.nearT = rnd(1.5, 4);
@@ -671,6 +680,199 @@
     var side = o.x < me.x ? -1 : 1, keep = o.idleTotal;
     walkTo(o, clampToFloor([me.x + side * rnd(0.08, 0.14), me.y + rnd(-0.03, 0.03)], R(o).floor));
     o.idleTotal = keep;
+  }
+
+
+  /* ---------- Freddy the dog (rare): bursts in through a door, chases the cats, then trots off ---------- */
+  var FC = C.freddy, fredId = 0;
+  var fredFrames = (function () {
+    var sp = (window.CAT_SPRITES || {}).freddy || {}, o = {};
+    Object.keys(FC.states).forEach(function (st) { o[st] = ((sp[st] || {}).frames || []).map(loadImg); });
+    return o;
+  })();
+  state.freddy = null;
+  state.freddyT = params.get("freddy") != null && params.get("freddy") !== "" ? +params.get("freddy") : FC.first;
+  state.freddyStats = { visits: 0, caught: 0, shooed: 0 };
+  function catsOnFloor(roomId) { return catsIn(roomId).filter(function (c) { return !c.perch && !c.air; }); }
+  function frighten(c) {
+    if (c.mode === "nap") wake(c, true);
+    if (c.perch && c.perch.nap) { c.perch.nap = false; c.perch.idle = 0; c.sunny = null; }
+    c.scaredT = 0.9;
+    say(c, "!", 1.1, true);
+    if (isPlayer(c) || c.perch || c.air || c.mode === "scuffle") return;
+    if (c.task && c.task.obj) c.task.obj.claimed = null;
+    if (c.task && c.task.spot) c.task.spot.occupied = null;
+    c.task = null; c.doorGoal = null; c.snackGoal = null; c.treatGoal = null;
+    c.path = []; c.mode = "idle"; c.fleeT = 0;
+  }
+  function startFreddy(roomId, byHouse) {
+    roomId = roomId || state.room;
+    if (state.freddy || !rooms[roomId]) return null;
+    var r = rooms[roomId], cs = catsIn(roomId);
+    if (!cs.length) return null;
+    var doors = (r.doors || []).length ? r.doors : [{ floor: r.spawn }];
+    var d = doors[0], bd = -1;     // the door farthest from the cats: a fair head start
+    doors.forEach(function (dd) { var m = nearestCatDist(dd.floor, roomId); if (m > bd) { bd = m; d = dd; } });
+    var p = clampToFloor(d.floor, r.floor);
+    var f = { id: ++fredId, room: roomId, x: p[0], y: p[1], path: [], facing: centroid(r.floor)[0] > p[0] ? 1 : -1,
+      phase: 0, moveAmt: 0, alpha: 0, pose: "bark", mode: "enter", t: 0.8, chaseT: rnd(FC.chase[0], FC.chase[1]),
+      safeT: 0, caughtAgo: 9, lastCaught: null, retarget: 0, target: null, byHouse: !!byHouse, door: d,
+      bubble: { text: "Woof!", t: 1, max: 1 } };
+    state.freddy = f;
+    state.freddyStats.visits++;
+    cs.forEach(frighten);
+    if (roomId === state.room) { showWarn("Freddy! \uD83D\uDC36 Run!", 2.2); sfx("bark"); }
+    return f;
+  }
+  function freddyLeave(f, shooed) {
+    if (f.mode === "leave" || f.mode === "gone") return;
+    var cs = catsIn(f.room);
+    var bonus = Math.min(FC.points.safeMax, Math.round(f.safeT * FC.points.safePerSec));
+    if (bonus > 0 && cs.length) {
+      var me = cats[state.selected], who = me && me.room === f.room ? me : cs[0];
+      addScore(bonus, [who.x, who.y - catScale(who) * 0.7], "safe!", f.room);
+    }
+    f.mode = "leave"; f.pose = "run"; f.shooed = !!shooed;
+    var r = rooms[f.room], doors = (r.doors || []).length ? r.doors : [f.door];
+    var d = doors.slice().sort(function (a, b) { return hdist([f.x, f.y], a.floor) - hdist([f.x, f.y], b.floor); })[0];
+    f.path = findPath([f.x, f.y], clampToFloor(d.floor, r.floor), r);
+    cs.forEach(function (c) { c.scaredT = 0; if (c.mode === "flee") { c.mode = c.path.length ? "walk" : "idle"; } });
+    var pc = cs.filter(isPlayer)[0] || cs[0];
+    if (pc && pc.room === state.room) say(pc, "Phew!", 1.4, true);
+  }
+  function shooFreddy() {
+    var f = state.freddy;
+    if (!f || f.mode === "leave" || f.mode === "gone") return false;
+    state.freddyStats.shooed++;
+    f.bubble = { text: "Yip!", t: 0.9, max: 0.9 };
+    if (f.room === state.room) sfx("whine");
+    addScore(FC.points.shoo, [f.x, f.y - depthScale(f.y, rooms[f.room]) * 1.2], "shoo!", f.room);
+    freddyLeave(f, true);
+    return true;
+  }
+  function freddyCatch(f, c) {
+    state.freddyStats.caught++;
+    c.mode = "tumble"; c.tumbleT = 0.9; c.path = []; c.scaredT = 0;
+    if (c.room === state.room) sfx("tumble");
+    addScore(FC.points.caught, [c.x, c.y - catScale(c) * 0.6], "caught!", c.room);
+    f.mode = "pause"; f.t = 1.1; f.pose = "bow"; f.path = []; f.caughtAgo = 0; f.lastCaught = c.id; f.bubble = null; (f.caught = f.caught || {})[c.id] = 1;
+    if (f.room === state.room) sfx("bark");
+  }
+  function fleeSpot(c, f, r) {
+    var best = null, bs = -1e9;
+    for (var i = 0; i < 40; i++) {
+      var q = randomIn(r.floor);
+      var sc = hdist(q, [f.x, f.y]) - 0.35 * hdist(q, [c.x, c.y]);
+      // don't run past Freddy to get there
+      var toQ = [q[0] - c.x, q[1] - c.y], toF = [f.x - c.x, f.y - c.y];
+      if (toQ[0] * toF[0] + toQ[1] * toF[1] > 0 && hdist([c.x, c.y], [f.x, f.y]) < 0.4) sc -= 0.5;
+      if (sc > bs) { bs = sc; best = q; }
+    }
+    return best;
+  }
+  function updateFreddy(dt) {
+    var f = state.freddy;
+    if (!f) return;
+    var r = rooms[f.room];
+    if (f.bubble) { f.bubble.t -= dt; if (f.bubble.t <= 0) f.bubble = null; }
+    f.caughtAgo += dt;
+    if (f.mode === "gone") { f.alpha -= dt * 4; if (f.alpha <= 0) { state.freddy = null; state.freddyT = rnd(FC.gap[0], FC.gap[1]); lastBadgeKey = ""; } return; }
+    if (f.alpha < 1) f.alpha = Math.min(1, f.alpha + dt * 4);
+    var cs = catsIn(f.room);
+    if (f.mode === "enter" || f.mode === "pause") {
+      f.t -= dt; f.moveAmt = Math.max(0, f.moveAmt - dt * 5);
+      if (f.t <= 0) { f.mode = "chase"; f.pose = "run"; }
+    } else if (f.mode === "chase") {
+      f.chaseT -= dt;
+      if (!cs.length || f.chaseT <= 0) freddyLeave(f, false);
+      else {
+        if (f.caughtAgo > 2) f.safeT += dt;
+        f.caught = f.caught || {};
+        var floor = catsOnFloor(f.room);
+        var prey = floor.filter(function (c) { return c.mode !== "tumble" && !f.caught[c.id]; });   // each cat is caught at most once per visit
+        if (floor.length && !prey.length && floor.every(function (c) { return f.caught[c.id]; })) { freddyLeave(f, false); return; }
+        f.retarget -= dt;
+        if (f.retarget <= 0 || !f.target || prey.indexOf(cats[f.target]) < 0) {
+          f.retarget = 0.4;
+          var dOf = function (c) { return hdist([f.x, f.y], [c.x, c.y]); };
+          var near = prey.slice().sort(function (a, b) { return dOf(a) - dOf(b); })[0];
+          var cur = f.target && prey.indexOf(cats[f.target]) >= 0 ? cats[f.target] : null;
+          if (!cur || (near && dOf(near) < dOf(cur) * 0.7)) cur = near;     // stick with one cat unless another is much closer
+          f.target = cur ? cur.id : null;
+          f.path = cur ? findPath([f.x, f.y], [cur.x, cur.y], r) : [];
+        }
+        if (!prey.length) {
+          // everyone is up on the furniture: he barks at them
+          f.pose = Math.floor(performance.now() / 700) % 3 === 2 ? "bow" : "bark";
+          if (!f.bubble && Math.random() < dt * 0.5) { f.bubble = { text: "Woof!", t: 0.8, max: 0.8 }; if (f.room === state.room) sfx("bark"); }
+        } else f.pose = "run";
+        var tc = f.target && cats[f.target];
+        if (tc && prey.indexOf(tc) >= 0) {
+          var reach = Math.max(0.035, FC.reach * depthScale(f.y, r) / 0.15);
+          if (dist([f.x, f.y], [tc.x, tc.y]) < reach) freddyCatch(f, tc);
+        }
+      }
+    }
+    // AI cats run away
+    if (f.mode === "chase" || f.mode === "enter" || f.mode === "pause") cs.forEach(function (c) {
+      if (isPlayer(c) || c.perch || c.air || c.mode === "tumble" || c.mode === "scuffle" || c.scaredT > 0.4) return;
+      c.fleeT = (c.fleeT || 0) - dt;
+      var close = hdist([c.x, c.y], [f.x, f.y]) < 0.3;
+      if (c.mode !== "flee" || !c.path.length || (close && c.fleeT <= 0)) {
+        if (c.fleeT > 0 && c.mode === "flee") return;
+        c.fleeT = 0.7;
+        walkTo(c, fleeSpot(c, f, R(c)), "flee", FC.catRun / c.cfg.speed);
+      }
+    });
+    // move along the path
+    if (f.path.length && f.mode !== "enter" && f.mode !== "pause") {
+      var t = f.path[0], dx = t[0] - f.x, dy = t[1] - f.y, d = Math.hypot(dx, dy);
+      var persp = depthScale(f.y, r) / r.depth.s2;
+      var v = FC.speed * (f.mode === "leave" ? (f.shooed ? 1.5 : 1.25) : 1) * Math.max(0.35, persp) * dt;
+      if (Math.abs(dx) > 0.002) f.facing = dx > 0 ? 1 : -1;
+      if (d <= v) { f.x = t[0]; f.y = t[1]; f.path.shift(); } else { f.x += dx / d * v; f.y += dy / d * v; }
+      f.moveAmt = Math.min(1, f.moveAmt + dt * 6);
+      f.phase += dt * 17 * Math.max(0.6, persp + 0.3);
+    } else if (f.mode !== "enter") f.moveAmt = Math.max(0, f.moveAmt - dt * 5);
+    if (f.mode === "leave" && !f.path.length) f.mode = "gone";
+  }
+  var fredMusicOn = false;
+  function updateFreddyMusic() {
+    var f = state.freddy, want = !!(f && f.room === state.room && (f.mode === "enter" || f.mode === "chase" || f.mode === "pause"));
+    if (want === fredMusicOn) return;
+    fredMusicOn = want;
+    try { if (CatAudio.freddyMusic) CatAudio.freddyMusic(want); } catch (e) {}
+  }
+  function drawFreddy(f) {
+    var st = f.pose || "run", stc = FC.states[st] || FC.states.run, fr = fredFrames[st] || [];
+    var moving = st === "run";
+    var im = moving ? fr[Math.floor(Math.abs(f.phase) / (Math.PI * 2) * 4) % 4] : fr[0];
+    if (!im || !im.complete || !im.naturalWidth) return;
+    var r = rooms[f.room], sp = toScreen([f.x, f.y]);
+    var base = depthScale(f.y, r) * FC.height * view.ih, h = base * stc.rel, w = h * im.naturalWidth / im.naturalHeight;
+    var walk = moving ? f.moveAmt : 0;
+    var bob = Math.abs(Math.sin(f.phase * 2)) * h * 0.04 * walk;
+    if (st === "bark") bob = Math.abs(Math.sin(performance.now() / 110)) * h * 0.025;
+    var flip = f.facing === stc.faces ? 1 : -1, sh = stc.shadow;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, f.alpha == null ? 1 : f.alpha));
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath(); ctx.ellipse(sp[0], sp[1] - h * sh.y, w * sh.w, Math.max(2, h * sh.h), 0, 0, Math.PI * 2); ctx.fill();
+    ctx.translate(sp[0], sp[1] - bob);
+    ctx.rotate(Math.sin(f.phase) * 0.02 * walk * flip);
+    ctx.scale(flip, 1);
+    var legs = moving && walk > 0.05 ? stc.legs : null;
+    drawSprite(im, legs, w, h, legs ? Math.sin(f.phase) * legs.swing * 1.3 * walk : 0);
+    ctx.restore();
+    var pad = 10;
+    f._box = [sp[0] - w / 2 - pad, sp[1] - h - bob - pad, sp[0] + w / 2 + pad, sp[1] + pad];
+    f._head = [sp[0] + w * 0.3 * f.facing, sp[1] - h * 0.8 - bob];
+  }
+  function hitFreddy(sx, sy) {
+    var f = state.freddy;
+    if (!f || f.room !== state.room || !f._box || f.mode === "leave" || f.mode === "gone") return false;
+    var b = f._box;
+    return sx >= b[0] && sx <= b[2] && sy >= b[1] && sy <= b[3];
   }
 
   /* ---------- critters ---------- */
@@ -1218,6 +1420,12 @@
       cat.scratchT = Math.max(0, cat.scratchT - dt); cat.phase += dt * 20;
       if (cat.mode === "scratch") { if (cat.scratchT <= 0) { cat.mode = "idle"; cat.idleT = 1; } return; }
     }
+    if (cat.scaredT > 0) cat.scaredT = Math.max(0, cat.scaredT - dt);
+    if (cat.mode === "tumble") {
+      cat.tumbleT -= dt; cat.moveAmt = 0;
+      if (cat.tumbleT <= 0) { cat.tumbleT = 0; cat.mode = "idle"; cat.idleT = 1; if (cat.room === state.room) say(cat, "Mrow!", 0.9); }
+      return;
+    }
     if (cat.mode === "roll") {
       cat.rollT -= dt; cat.phase += dt * 6;
       if (cat.rollT <= 0) { cat.mode = "idle"; cat.idleT = 1.5; cat.idleTotal = 0; }
@@ -1270,6 +1478,7 @@
       var dx = t[0] - cat.x, dy = t[1] - cat.y, d = Math.hypot(dx, dy);
       var persp = depthScale(cat.y, r) / r.depth.s2;
       var boost = (cat.id === "ollie" && cats.stanley && cats.stanley.mode === "chase" && isPlayer(cats.ollie)) ? cat.cfg.fleeSpeed / cat.cfg.speed : 1;
+      if (isPlayer(cat) && state.freddy && state.freddy.room === cat.room && state.freddy.mode !== "leave" && state.freddy.mode !== "gone") boost = FC.catRun / cat.cfg.speed;
       var v = cat.cfg.speed * cat.speedMul * boost * Math.max(0.35, persp) * dt;
       if (Math.abs(dx) > 0.002) cat.facing = dx > 0 ? 1 : -1;
       if (d <= v) { cat.x = t[0]; cat.y = t[1]; cat.path.shift(); }
@@ -1345,6 +1554,7 @@
     if (DEBUG) debugEl.textContent = "tap " + p[0].toFixed(3) + ", " + p[1].toFixed(3);
     if (state.role === "house") { houseTap(p, sx, sy); return; }
     var me = state.selected;
+    if (hitFreddy(sx, sy)) { act(me, { k: "shoo" }); state.ripples.push({ x: state.freddy.x, y: state.freddy.y, t: 0 }); return; }
     // snack?
     var sn = state.snack;
     if (sn && sn.state !== "eaten" && sn.room === state.room) {
@@ -1399,8 +1609,10 @@
     var cat = cats[catId];
     if (c.k === "house") { houseAct(c, catId); return; }
     if (c.k === "putaway") { putAwaySnack(); return; }
+    if (c.k === "shoo") { shooFreddy(); return; }
     if (c.k === "treat") { dropTreat(c.p, c.room); return; }
     if (!cat) return;
+    if (cat.mode === "tumble") return;
     if (c.k === "wake") {
       if (cat.perch && cat.perch.nap) { cat.perch.nap = false; cat.perch.idle = 0; cat.sunny = null; say(cat, "Mrrp?", 1); }
       else if (cat.mode === "nap") wake(cat);
@@ -1629,6 +1841,9 @@
           sn.surf = best; sn.x = pp[0]; sn.y = pp[1]; sn.house = true; sn.warnAt = 2.5; ok = true;
         }
       }
+    } else if (tool === "freddy") {
+      var fd = !state.freddy && catsIn(r.id).length ? startFreddy(r.id, true) : null;
+      if (fd) { houseScore(C.house.points.freddy, [fd.x, fd.y - 0.12], "Freddy!", r.id); ok = true; }
     } else if (tool === "toy") {
       var toy = objById[c.id];
       if (!toy || toy.room !== r.id) toy = objects.filter(function (o) { return o.type === "toy" && o.room === r.id; })[0];
@@ -1661,7 +1876,7 @@
     if (k && !houseReady(k)) { showWarn(C.house.tools[k].label + " is recharging\u2026", 1.2); return; }
     state.houseTool = k;
     Array.prototype.forEach.call(houseBar.children, function (b) { b.classList.toggle("armed", b.dataset.tool === k); });
-    if (k) showWarn({ treat: "Tap the floor to drop a treat", spider: "Tap the floor: a spider drops in!", mouse: "Tap the floor: a mouse appears!", snack: "Tap a counter or table", toy: "Tap a toy mouse to send it zooming" }[k], 2);
+    if (k) showWarn({ treat: "Tap the floor to drop a treat", spider: "Tap the floor: a spider drops in!", mouse: "Tap the floor: a mouse appears!", snack: "Tap a counter or table", toy: "Tap a toy mouse to send it zooming", freddy: "Tap the room: Freddy bursts in!" }[k], 2);
   }
   var lastHouseKey = "";
   function updateHouseUI() {
@@ -1694,6 +1909,8 @@
       c.id = toy.id;
     }
     if (tool === "snack" && !(room().surfaces && room().surfaces.length)) { showWarn("No counter or table in this room", 1.6); return; }
+    if (tool === "freddy" && state.freddy) { showWarn("Freddy is already out!", 1.6); return; }
+    if (tool === "freddy" && !catsIn(state.room).length) { showWarn("No cats in this room for Freddy to chase", 1.8); return; }
     if (tool === "snack" && state.snack) { showWarn("There's already food out", 1.6); return; }
     if ((tool === "spider" || tool === "mouse") && state.critters.some(function (k) { return k.room === state.room && k.type === tool; })) { showWarn("There's already a " + tool + " here", 1.6); return; }
     act(null, c);
@@ -1855,7 +2072,7 @@
   function snapCat(c) {
     return { id: c.id, room: c.room, x: r4(c.x), y: r4(c.y), mode: c.mode, f: c.facing, mv: r4(c.moveAmt), st: r4(c.stillT), pc: c.pounce, sw: c.swipeT || 0,
       sc: c.scratchT || 0, sq: c.squash || 0, rl: c.rollT || 0, al: r4(c.airLift || 0), so: c.scaleOverride || null, sy: c.sortY == null ? null : c.sortY,
-      w: c.path.length > 0, sm: c.speedMul, b: c.bubble, bl: c.blink, sn: c.sunny ? c.sunny.id : null, sit: c.sit,
+      w: c.path.length > 0, sm: c.speedMul, tb: c.tumbleT || 0, sk: c.scaredT || 0, b: c.bubble, bl: c.blink, sn: c.sunny ? c.sunny.id : null, sit: c.sit,
       air: c.air ? { then: c.air.then } : null, pr: c.perch ? { kind: c.perch.kind, nap: !!c.perch.nap, obj: c.perch.obj ? c.perch.obj.id : null } : null };
   }
   function snapObj(o) {
@@ -1874,6 +2091,7 @@
       crit: state.critters.map(function (k) { return { id: k.id, type: k.type, room: k.room, x: r4(k.x), y: r4(k.y), drop: r4(k.drop || 0), dropFrom: k.dropFrom, facing: k.facing, moving: !!k.moving, caught: k.caught, t: r4(k.t) }; }),
       snack: sn ? { item: sn.item.id, room: sn.room, si: rooms[sn.room].surfaces.indexOf(sn.surf), x: r4(sn.x), y: r4(sn.y), state: sn.state, thief: sn.thief } : null,
       treat: state.treat, objs: objects.map(snapObj),
+      fr: state.freddy ? (function (f) { return { id: f.id, room: f.room, x: r4(f.x), y: r4(f.y), mode: f.mode, f: f.facing, mv: r4(f.moveAmt), a: r4(f.alpha), pose: f.pose, b: f.bubble }; })(state.freddy) : null,
       score: state.score, stats: state.stats, catStats: state.catStats, house: state.house,
       round: state.round ? state.round.left : null, tcd: state.treatCooldown, ctl: state.controlled,
       ev: net.events.filter(function (e) { return now - e.at < 3000; })
@@ -1969,7 +2187,7 @@
       c._tx = q.x; c._ty = q.y;
       c.mode = q.mode; c.facing = q.f; c.moveAmt = q.mv; c.stillT = q.st; c.pounce = q.pc; c.swipeT = q.sw; c.scratchT = q.sc;
       c.squash = q.sq; c.rollT = q.rl; c.airLift = q.al; c.scaleOverride = q.so; c.sortY = q.sy; c.path = q.w ? [[q.x, q.y]] : [];
-      c.speedMul = q.sm; c.blink = q.bl; c.sit = q.sit; c.sunny = q.sn ? objById[q.sn] : null; c.air = q.air;
+      c.speedMul = q.sm; c.tumbleT = q.tb || 0; c.scaredT = q.sk || 0; c.blink = q.bl; c.sit = q.sit; c.sunny = q.sn ? objById[q.sn] : null; c.air = q.air;
       c.perch = q.pr ? { kind: q.pr.kind, nap: q.pr.nap, obj: q.pr.obj ? objById[q.pr.obj] : null, t: Infinity, idle: 0 } : null;
       if (!q.b) c.bubble = null; else if (!c.bubble || c.bubble.text !== q.b.text) c.bubble = { text: q.b.text, t: q.b.t, max: q.b.max };
     });
@@ -1993,6 +2211,17 @@
       state.snack.x = s.snack.x; state.snack.y = s.snack.y; state.snack.state = s.snack.state; state.snack.thief = s.snack.thief; state.snack.t = state.snack.t || 0;
     } else state.snack = null;
     state.treat = s.treat;
+    if (!s.fr) state.freddy = null;
+    else {
+      var fq = s.fr, ff = state.freddy;
+      if (!ff || ff.id !== fq.id) {
+        ff = state.freddy = { id: fq.id, x: fq.x, y: fq.y, phase: 0, path: [] };
+        if (fq.room === state.room && fq.mode !== "leave" && fq.mode !== "gone") { showWarn("Freddy! \uD83D\uDC36 Run!", 2.2); sfx("bark"); }
+      }
+      if (ff.room !== fq.room || hdist([ff.x, ff.y], [fq.x, fq.y]) > 0.25) { ff.x = fq.x; ff.y = fq.y; }
+      ff.room = fq.room; ff._tx = fq.x; ff._ty = fq.y; ff.mode = fq.mode; ff.facing = fq.f; ff.moveAmt = fq.mv; ff.alpha = fq.a; ff.pose = fq.pose;
+      if (!fq.b) ff.bubble = null; else if (!ff.bubble || ff.bubble.text !== fq.b.text) ff.bubble = { text: fq.b.text, t: fq.b.t, max: fq.b.max };
+    }
     s.objs.forEach(function (q) {
       var o = objById[q.id]; if (!o) return;
       if (o.type === "cup") {
@@ -2037,6 +2266,8 @@
       else if (c.perch) c.phase += dt * 4;
     });
     state.critters.forEach(function (q) { if (q._tx != null) { q.x += (q._tx - q.x) * k; q.y += (q._ty - q.y) * k; } });
+    var fc = state.freddy;
+    if (fc && fc._tx != null) { fc.x += (fc._tx - fc.x) * k; fc.y += (fc._ty - fc.y) * k; if (fc.moveAmt > 0.2) fc.phase += dt * 17; if (fc.bubble) { fc.bubble.t -= dt; if (fc.bubble.t <= 0) fc.bubble = null; } }
     if (state.round) {
       var s2 = Math.max(0, Math.ceil(state.round.left));
       timerEl.textContent = "\u23F1 " + Math.floor(s2 / 60) + ":" + ("0" + (s2 % 60)).slice(-2);
@@ -2142,6 +2373,7 @@
   function poseFor(cat) {
     var walkFrame = WALK_SEQ[Math.floor(cat.phase / (Math.PI * 2) * 6) % 6];
     if (cat.mode === "scuffle") return Math.floor(cat.phase / 3) % 2 ? { st: "pounce", f: 0 } : { st: "walk", f: walkFrame };
+    if (cat.mode === "tumble") return { st: "pounce", f: 0 };
     if (cat.air) return { st: "pounce", f: 0 };
     if (cat.mode === "roll") return cat.rollT > 1.8 ? { st: "pounce", f: 0 } : { st: "nap", f: 0 };
     if (cat.perch && cat.perch.nap) return { st: "nap", f: 0 };
@@ -2204,6 +2436,9 @@
     if (cat.swipeT > 0) { tilt = -0.18 * Math.sin((0.6 - cat.swipeT) / 0.6 * Math.PI); sx = 1.06; }
     if (pose.st === "nap") { var br = 1 + Math.sin(performance.now() / 650) * 0.02; sy = br; sx = 1 + (br - 1) * 0.4; }
     if (pose.st === "sit" && cat.blink > 0) sy = 1 - Math.sin(cat.blink / 0.25 * Math.PI) * 0.03;
+    var shake = 0, piv = 0;
+    if (cat.scaredT > 0) { var sk = Math.min(1, cat.scaredT / 0.3); sy *= 1 + 0.1 * sk; sx *= 1 + 0.05 * sk; shake = Math.sin(performance.now() / 18) * base * 0.035 * sk; }   // puffed up + shaking
+    if (cat.mode === "tumble") { var tk = 1 - (cat.tumbleT || 0) / 0.9; tilt = tk * Math.PI * 2; bob = Math.sin(tk * Math.PI) * h * 0.35; piv = h * 0.45; }
     var flip = cat.facing === stc.faces ? 1 : -1;
     if (cat.mode === "roll" && rollFlip) flip = -flip;
     var sh = stc.shadow || { y: 0.02, w: 0.4, h: 0.07 };
@@ -2224,8 +2459,9 @@
       ctx.restore();
     }
     ctx.save();
-    ctx.translate(sp[0], sp[1] - bob - lift);
+    ctx.translate(sp[0] + shake, sp[1] - bob - lift - piv);
     ctx.rotate(tilt * flip);
+    if (piv) ctx.translate(0, piv);
     ctx.scale(sx * flip, sy);
     var legs = pose.st === "walk" && pose.moving ? stc.legs : null;
     var swingAmt = legs ? Math.sin(cat.phase) * legs.swing * (running ? 1.5 : 1) * walk : 0;
@@ -2618,6 +2854,7 @@
         if (net.on) hostBroadcast(dt);
         updateRound(dt);
         updateAI(dt);
+        updateFreddy(dt);
         updateDirector(dt);
         updateFollow(dt);
         updateCritters(dt);
@@ -2628,6 +2865,7 @@
         updateCatButtons();
       } else dt = 0;
       updateCatButtons();
+      updateFreddyMusic();
       followMyCat();
       updateCamera(dt);
       updateDolly(rdt);
@@ -2655,9 +2893,12 @@
         if (o.type === "toy") items.push({ y: o.y, draw: function () { drawToy(o); } });
       });
       state.critters.forEach(function (k) { if (k.room === state.room) items.push({ y: k.y, draw: function () { drawCritter(k); } }); });
+      var fz = state.freddy;
+      if (fz && fz.room === state.room) items.push({ y: fz.y, draw: function () { drawFreddy(fz); } }); else if (fz) fz._box = null;
       items.sort(function (a, b) { return a.y - b.y; }).forEach(function (it) { it.draw(); });
       drawPoofs(dt);
       catIds.forEach(function (id) { if (visible(cats[id])) drawBubble(cats[id]); });
+      if (fz && fz.room === state.room && fz.bubble) drawBubble(fz);
       drawPopups(dt);
       drawXfade(rdt);
     } catch (err) {
@@ -2741,6 +2982,7 @@
     sendCat: function (id, to) { var c = cats[id], d = (R(c).doors || []).filter(function (x) { return x.to === to; })[0]; if (d) aiTravel(c, d); return !!d; },
     audio: CatAudio, audioPrefs: function () { return audioPrefs; },
     net: net, act: act, hostGame: hostGame, joinGame: joinGame, goSolo: goSolo, startHouseMode: startHouseMode, setHouseTool: setHouseTool, houseAct: houseAct, cam: cam, dolly: function () { return dolly ? { phase: dolly.phase, t: dolly.t, z: dollyZoom() } : null; },
+    startFreddy: startFreddy, shooFreddy: shooFreddy, freddy: function () { return state.freddy; },
     goTo: function (to) { var d = (room().doors || []).filter(function (x) { return x.to === to; })[0]; if (d) goTo(d); return !!d; }
   };
 
