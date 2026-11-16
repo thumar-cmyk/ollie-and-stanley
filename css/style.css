@@ -18,7 +18,7 @@ button { font: inherit; touch-action: manipulation; cursor: pointer; }
   background: rgba(255, 140, 60, 0.88); color: #fff;
   padding: 6px 12px 6px 8px; display: flex; align-items: center; gap: 6px;
   box-shadow: 0 3px 10px rgba(0,0,0,.45); font-weight: bold; font-size: 14px;
-  white-space: nowrap; animation: pulse 2.2s ease-in-out infinite;
+  white-space: nowrap;
 }
 .door .arr { font-size: 22px; line-height: 1; }
 .door.arrow-right { flex-direction: row-reverse; padding: 6px 8px 6px 12px; }
@@ -232,3 +232,94 @@ body.house-role #net-status { top: auto; bottom: calc(80px + env(safe-area-inset
 #net-msg { text-align: center; margin: 6px 0 0; font-size: 14px; min-height: 18px; color: #2b6a2b; font-weight: bold; }
 #net-msg.bad { color: #c0392b; }
 #treat-btn[hidden] { display: none; }
+
+/* ---------- v4: calm UI ---------- */
+/* doors: small translucent chevrons near the doorway; the name only shows while pressed */
+.door {
+  width: 38px; height: 38px; padding: 0; gap: 0; justify-content: center;
+  border: 1.5px solid rgba(255,255,255,.55); background: rgba(20,12,6,.28); color: rgba(255,255,255,.92);
+  box-shadow: none; font-size: 12px; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  transition: background .2s, opacity .2s;
+}
+.door.arrow-right { padding: 0; flex-direction: row; }
+.door .arr { display: flex; width: 22px; height: 22px; font-size: 0; }
+.door .arr svg { width: 100%; height: 100%; }
+.door.arrow-left .arr svg { transform: rotate(180deg); }
+.door.arrow-up .arr svg { transform: rotate(-90deg); }
+.door.arrow-down .arr svg { transform: rotate(90deg); }
+.door .lbl {
+  position: absolute; left: 50%; bottom: calc(100% + 6px); transform: translateX(-50%);
+  background: rgba(30,18,10,.85); color: #ffe9a0; border-radius: 999px; padding: 2px 10px; font-size: 13px;
+  opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+.door.arrow-up .lbl { bottom: auto; top: calc(100% + 6px); }
+.door:active .lbl, .door.pressed .lbl { opacity: 1; }
+.door:active, .door.pressed { background: rgba(255,200,110,.45); }
+.door .badge, .door .faces { position: absolute; top: -10px; right: -12px; margin: 0; }
+.door .badge { font-size: 13px; }
+.door .faces img { width: 18px; height: 18px; border-width: 1.5px; }
+.door.has-critter { background: rgba(20,12,6,.28); }
+@media (max-height: 360px) { .door { font-size: 12px; padding: 0; } }
+
+/* score: one small chip */
+#hud-top { top: calc(6px + env(safe-area-inset-top)); gap: 6px; }
+#score-pill, #round-timer, #house-pill {
+  font-size: 15px; padding: 2px 10px; border-width: 1.5px; border-color: rgba(255,216,74,.55);
+  background: rgba(30,18,10,.55); box-shadow: none; display: flex; align-items: center; gap: 4px;
+}
+#score-pill b { font-size: 16px; }
+#score-pill .star { font-size: 13px; }
+#score-pill .best { display: none; }
+#house-pill { border-color: rgba(159,211,255,.6); }
+@media (max-height: 360px) { #score-pill { font-size: 14px; } }
+
+/* cats: two small faces bottom-left */
+#cat-buttons { gap: 6px; left: calc(8px + env(safe-area-inset-left)); bottom: calc(8px + env(safe-area-inset-bottom)); }
+.cat-btn { width: 52px; font-size: 11px; }
+.cat-btn img { width: 44px; height: 44px; border-width: 2.5px; box-shadow: 0 2px 6px rgba(0,0,0,.45); }
+.cat-btn.active img { transform: none; box-shadow: 0 0 0 3px rgba(255,216,74,.35), 0 2px 6px rgba(0,0,0,.5); }
+.cat-btn:not(.active) img { opacity: .75; }
+.cat-btn:not(.active) span { opacity: .8; }
+@media (max-height: 360px) { .cat-btn { width: 48px; } .cat-btn img { width: 40px; height: 40px; } }
+
+/* one menu button, top-right */
+#menu-btn {
+  position: absolute; right: calc(10px + env(safe-area-inset-right)); top: calc(8px + env(safe-area-inset-top));
+  width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid rgba(255,255,255,.55); background: rgba(20,12,6,.35);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3.5px; padding: 0;
+}
+#menu-btn span { display: block; width: 16px; height: 2px; border-radius: 2px; background: #fff; transition: transform .2s, opacity .2s; }
+#menu-btn.open span:nth-child(1) { transform: translateY(5.5px) rotate(45deg); }
+#menu-btn.open span:nth-child(2) { opacity: 0; }
+#menu-btn.open span:nth-child(3) { transform: translateY(-5.5px) rotate(-45deg); }
+#menu {
+  position: absolute; right: calc(10px + env(safe-area-inset-right)); top: calc(52px + env(safe-area-inset-top)); z-index: 6;
+  width: 250px; max-height: calc(100% - 60px); overflow: auto;
+  background: rgba(255,248,236,.97); color: #3a1d12; border-radius: 16px; padding: 8px 12px;
+  box-shadow: 0 8px 26px rgba(0,0,0,.45); font-size: 15px;
+}
+#menu[hidden] { display: none; }
+#menu .sec { padding: 4px 0; border-bottom: 1px solid #ecdcc4; }
+#menu .sec:last-of-type { border-bottom: none; }
+#menu .row { display: flex; align-items: center; gap: 8px; font-weight: bold; margin: 2px 0; }
+#menu input[type=checkbox] { width: 20px; height: 20px; accent-color: #ff8c3c; }
+#menu input[type=range] { width: 100%; accent-color: #ff8c3c; margin: 0 0 2px; height: 18px; }
+#menu .modes { display: flex; gap: 6px; }
+#menu .modes button { flex: 1; border: 1.5px solid #e2cfb1; background: #fff; border-radius: 999px; padding: 6px 4px; font-size: 13px; white-space: nowrap; font-weight: bold; color: #3a1d12; }
+#menu .modes button.on { background: #ff8c3c; border-color: #ff8c3c; color: #fff; }
+#menu .list { display: flex; flex-direction: column; }
+#menu .list button { text-align: left; border: none; background: none; padding: 5px 2px; font-size: 15px; font-weight: bold; color: #3a1d12; }
+#menu .list button[hidden] { display: none; }
+#menu .note { margin: 2px 0 0; font-size: 10.5px; color: #8a6a50; }
+
+/* first-launch card */
+.overlay .card.intro { max-width: 440px; text-align: center; padding: 18px 24px 20px; }
+.overlay .card.intro .lead { font-size: 18px; line-height: 1.45; margin: 6px 0 4px; }
+.overlay .btns button.big { font-size: 22px; padding: 12px 56px; }
+
+/* quieter toasts */
+#room-toast { font-size: 15px; padding: 3px 14px; border-width: 1.5px; top: calc(40px + env(safe-area-inset-top)); background: rgba(30,18,10,.6); }
+#warn { font-size: 14px; padding: 4px 12px; top: calc(40px + env(safe-area-inset-top)); background: rgba(255,250,235,.92); }
+#map-btn { left: calc(10px + env(safe-area-inset-left)); width: 38px; height: 38px; font-size: 18px; border-width: 1.5px; }
+#map { top: calc(54px + env(safe-area-inset-top)); }
+#fade { transition: opacity .15s; }

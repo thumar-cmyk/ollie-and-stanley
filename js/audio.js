@@ -1,6 +1,8 @@
 /*
- * Ollie & Stanley audio: everything is synthesized with WebAudio (no files).
- *  - music: a slow, original I-vi-IV-V lullaby loop (soft pads, music-box notes, bass)
+ * Ollie & Stanley audio.
+ *  - music (v4): Nehas's song, assets/audio/theme.mp3, looped through an <audio> element routed
+ *    into WebAudio (so its volume works on iOS too). Fades in, pauses when the page is hidden.
+ *    The old synthesized lullaby is still here (CatAudio.state.synth = true to use it).
  *  - effects: taps, doors, crashes, and formant-synthesized cat voices
  * iOS: audio can only start after a user gesture (call unlock() from a tap).
  * navigator.audioSession "ambient" (Safari 16.4+) makes the ringer/mute switch silence the game.
@@ -8,7 +10,8 @@
 window.CatAudio = (function () {
   "use strict";
   var A = { ctx: null, master: null, musicBus: null, fxBus: null,
-            musicOn: false, fxOn: false, musicVol: 0.35, fxVol: 0.8, timer: 0, nextBar: 0, bar: 0 };
+            musicOn: false, fxOn: false, musicVol: 0.35, fxVol: 0.8, timer: 0, nextBar: 0, bar: 0,
+            synth: false, song: null, songBus: null, songSrc: "assets/audio/theme.mp3", songErr: null };
   try { if (navigator.audioSession) navigator.audioSession.type = "ambient"; } catch (e) {}
 
   function ensure() {
@@ -27,7 +30,38 @@ window.CatAudio = (function () {
     var lp = A.ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1800;
     A.musicIn = A.ctx.createGain(); A.musicIn.connect(A.musicBus);
     A.musicIn.connect(dl); dl.connect(lp); lp.connect(fb); fb.connect(dl); lp.connect(A.musicBus);
+    // the song: <audio loop> -> songBus (gain) -> master
+    A.songBus = A.ctx.createGain(); A.songBus.gain.value = 0; A.songBus.connect(A.master);
     return true;
+  }
+  function songEl() {
+    if (A.song) return A.song;
+    var el = new Audio();
+    el.loop = true; el.preload = "auto"; el.setAttribute("playsinline", ""); el.crossOrigin = "anonymous";
+    el.src = A.songSrc;
+    el.addEventListener("error", function () { A.songErr = "load"; });
+    A.song = el;
+    try { A.ctx.createMediaElementSource(el).connect(A.songBus); A.routed = true; }
+    catch (e) { A.routed = false; }      // fallback: element volume (ignored on iOS, but still plays)
+    return el;
+  }
+  function songPlay() {
+    if (!A.ctx || !A.musicOn || document.hidden) return;
+    var el = songEl();
+    if (!A.routed) el.volume = A.musicVol;
+    if (el.paused) {
+      A.songBus.gain.cancelScheduledValues(A.ctx.currentTime);
+      A.songBus.gain.setValueAtTime(0, A.ctx.currentTime);
+      var p = el.play();
+      if (p && p.catch) p.catch(function (e) { A.songErr = String(e && e.name || e); });
+    }
+    ramp(A.songBus.gain, A.musicVol, 2.5);       // gentle fade-in
+  }
+  function songStop(fade) {
+    if (!A.song || !A.ctx) return;
+    ramp(A.songBus.gain, 0, fade || 0.6);
+    clearTimeout(A.songT);
+    A.songT = setTimeout(function () { if (!A.musicOn || document.hidden) A.song.pause(); }, (fade || 0.6) * 1000 + 80);
   }
   function unlock() {
     if (!(A.musicOn || A.fxOn)) return;
@@ -41,6 +75,10 @@ window.CatAudio = (function () {
   function setMusic(on, vol) {
     A.musicOn = !!on; if (vol != null) A.musicVol = vol;
     if (!A.ctx) { if (on) unlock(); return; }
+    if (!A.synth) {
+      if (A.musicOn) songPlay(); else songStop();
+      return;
+    }
     ramp(A.musicBus.gain, A.musicOn ? A.musicVol * 0.5 : 0, 0.6);
     if (A.musicOn) startMusic();
   }
@@ -87,6 +125,7 @@ window.CatAudio = (function () {
     }
   }
   function startMusic() {
+    if (!A.synth) { songPlay(); return; }
     if (!A.ctx || A.timer) return;
     A.nextBar = A.ctx.currentTime + 0.1;
     A.timer = setInterval(function () {
@@ -204,5 +243,12 @@ window.CatAudio = (function () {
       meow(low, kind);
     } catch (e) {}
   }
+  // pause when the app is hidden (home button, lock screen, other tab); resume when back
+  document.addEventListener("visibilitychange", function () {
+    if (!A.ctx) return;
+    if (document.hidden) { if (A.song) { A.song.pause(); A.songBus.gain.value = 0; } }
+    else if (A.musicOn && !A.synth) { if (A.ctx.state === "suspended") A.ctx.resume(); songPlay(); }
+  });
+  window.addEventListener("pagehide", function () { if (A.song) A.song.pause(); });
   return { unlock: unlock, setMusic: setMusic, setFx: setFx, sfx: sfx, cat: cat, state: A };
 })();

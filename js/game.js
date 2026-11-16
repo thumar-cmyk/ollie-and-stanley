@@ -9,7 +9,7 @@
   var $ = function (id) { return document.getElementById(id); };
   var canvas = $("game"), ctx = canvas.getContext("2d");
   var hotLayer = $("hotspots"), toastEl = $("room-toast"), fadeEl = $("fade");
-  var catBtns = $("cat-buttons"), soundBtn = $("sound-btn"), debugEl = $("debug-info");
+  var catBtns = $("cat-buttons"), debugEl = $("debug-info");
   var scoreEl = $("score-val"), bestEl = $("best-val"), timerEl = $("round-timer");
   var treatBtn = $("treat-btn"), treatCd = $("treat-cd");
   var helpEl = $("help"), summaryEl = $("summary"), warnEl = $("warn");
@@ -118,6 +118,9 @@
   function rnd(a, b) { return a + Math.random() * (b - a); }
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 
+  // v4 "calm" mode (default): one event at a time, few bubbles, no roaming. ?busy=1 brings back the v3 behaviour.
+  var CALM = params.get("busy") !== "1";
+  if (params.get("gap")) { C.events.first = +params.get("gap"); C.events.gap = [+params.get("gap"), +params.get("gap")]; }
   /* ---------- state ---------- */
   var rooms = C.rooms;
   Object.keys(rooms).forEach(function (id) { rooms[id].id = id; rooms[id]._wps = waypoints(rooms[id].floor); });
@@ -206,8 +209,9 @@
     scoreEl.parentNode.classList.add(n >= 0 ? "bump" : "bump-neg");
     var txt = (n >= 0 ? "+" : "") + n + (label ? " " + label : "");
     if (at) netEvent({ k: "pop", x: at[0], y: at[1], text: txt, good: n >= 0, room: roomId || state.room });
-    if (at && (!roomId || roomId === state.room)) state.popups.push({ x: at[0], y: at[1], text: txt, good: n >= 0, t: 0 });
-    else if (at && roomId) showWarn(txt + " (" + rooms[roomId].name + ")", 2.2);
+    var quietPts = CALM && label && /^zzz/.test(label);   // nap points just tick the score
+    if (at && !quietPts && (!roomId || roomId === state.room)) state.popups.push({ x: at[0], y: at[1], text: CALM ? (n >= 0 ? "+" : "") + n : txt, good: n >= 0, t: 0 });
+    else if (at && roomId && !CALM) showWarn(txt + " (" + rooms[roomId].name + ")", 2.2);
   }
 
   /* ---------- layout ---------- */
@@ -228,6 +232,8 @@
 
   /* ---------- doors ---------- */
   var ARROWS = { left: "\u2190", right: "\u2192", up: "\u2191", down: "\u2193" };
+  var CHEV = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var CHEVRONS = { left: CHEV, right: CHEV, up: CHEV, down: CHEV };   // rotated per direction in CSS
   function buildHotspots() {
     hotLayer.innerHTML = "";
     var r = room();
@@ -236,12 +242,18 @@
       b.className = "door arrow-" + d.arrow;
       b.dataset.to = d.to;
       b.dataset.x = d.x; b.dataset.y = d.y;
-      b.innerHTML = '<span class="arr">' + ARROWS[d.arrow] + '</span><span class="lbl">' + rooms[d.to].name + '</span><span class="badge"></span><span class="faces"></span>';
+      // v4: a small translucent chevron; the room name only shows while pressed / on entering
+      b.innerHTML = '<span class="arr">' + CHEVRONS[d.arrow] + '</span><span class="lbl">' + rooms[d.to].name + '</span><span class="badge"></span><span class="faces"></span>';
       b.setAttribute("aria-label", "Go to " + rooms[d.to].name);
-      b.addEventListener("click", function (e) { e.stopPropagation(); unlockAudio(); doorTap(d); });
+      b.addEventListener("click", function (e) {
+        e.stopPropagation(); unlockAudio();
+        if (closeAudioPanel()) return;
+        b.classList.add("pressed"); setTimeout(function () { b.classList.remove("pressed"); }, 900);
+        doorTap(d);
+      });
       hotLayer.appendChild(b);
     });
-    (r.hints || []).forEach(function (h) {
+    if (params.get("hints") === "1") (r.hints || []).forEach(function (h) {
       var b = document.createElement("button");
       b.className = "door hint arrow-" + (h.arrow || "up");
       b.dataset.x = h.x; b.dataset.y = h.y;
@@ -315,6 +327,7 @@
     toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1800);
   }
   function showWarn(text, secs) {
+    toastEl.classList.remove("show");
     warnEl.textContent = text;
     warnEl.classList.add("show");
     clearTimeout(warnTimer);
@@ -368,7 +381,39 @@
    * doorway in the next room. Falls back to a plain fade (?nodolly=1 or
    * prefers-reduced-motion, or when the rooms aren't joined by a door). */
   var dolly = null;
-  var reduceMotion = params.get("nodolly") === "1" || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  // v4: the dolly is opt-in (?dolly=1); default is a quick crossfade with a slight push
+  var reduceMotion = params.get("dolly") !== "1" || (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  var calmFade = !(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+  var xfade = null, snapCanvas = document.createElement("canvas");
+  function startXfade(fx, fy) {
+    snapCanvas.width = canvas.width; snapCanvas.height = canvas.height;
+    try { snapCanvas.getContext("2d").drawImage(canvas, 0, 0); } catch (e) { return; }
+    xfade = { t: 0, dur: C.transition.ms / 1000, x: fx, y: fy };
+  }
+  function drawXfade(dt) {
+    if (!xfade) return;
+    xfade.t += dt;
+    var u = Math.min(1, xfade.t / xfade.dur), e = 1 - Math.pow(1 - u, 2), z = 1 + (C.transition.push - 1) * e;
+    ctx.save();
+    ctx.globalAlpha = 1 - e;
+    ctx.translate(xfade.x, xfade.y); ctx.scale(z, z); ctx.translate(-xfade.x, -xfade.y);
+    ctx.drawImage(snapCanvas, 0, 0, view.w, view.h);
+    ctx.restore();
+    if (u >= 1) xfade = null;
+  }
+  // Switch rooms with a short crossfade: snapshot the old frame, switch, fade the snapshot out while pushing toward the door.
+  function crossTo(roomId, doSwitch, cb) {
+    var im = loadImg(imgDir + rooms[roomId].image), done = false;
+    var go = function () {
+      if (done) return; done = true;
+      var door = doorBetween(state.room, roomId), pt = door ? toScreen([door.x, door.y]) : [view.w / 2, view.h / 2];
+      if (calmFade) startXfade(pt[0], pt[1]);
+      doSwitch();
+      state.transitioning = false;
+      if (cb) cb();
+    };
+    if (im.complete && im.naturalWidth) go(); else { im.addEventListener("load", go); im.addEventListener("error", go); setTimeout(go, 2500); }
+  }
   function easeIO(u) { return u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2; }
   function dollyU() { return dolly ? easeIO(Math.min(1, dolly.t / dolly.dur)) : 0; }
   function dollyZoom() { if (!dolly) return 1; var u = dollyU(); return dolly.phase === "in" ? 1 + 0.9 * u : 1 + 0.75 * (1 - u); }
@@ -416,12 +461,7 @@
       return;
     }
     state.transitioning = true;
-    fadeEl.classList.add("on");
-    setTimeout(function () {
-      var go = function () { setView(roomId); fadeEl.classList.remove("on"); state.transitioning = false; if (cb) cb(); };
-      var im = loadImg(imgDir + rooms[roomId].image);
-      if (im.complete) go(); else { im.onload = go; im.onerror = go; }
-    }, 260);
+    crossTo(roomId, function () { setView(roomId); }, cb);
   }
   function goTo(door) {
     if (state.transitioning || state.paused) return;
@@ -436,19 +476,10 @@
     var target = clampToFloor(door.floor, room().floor);
     walkTo(sel, target);
     var from = state.room;
-    var wait = Math.min(1100, 200 + dist([sel.x, sel.y], target) / sel.cfg.speed * 1000);
+    var wait = Math.min(900, 150 + dist([sel.x, sel.y], target) / sel.cfg.speed * 1000);
     setTimeout(function () {
       if (!reduceMotion) { dollyToView(door.to, function () { enterRoom(door.to, from); }); return; }
-      fadeEl.classList.add("on");
-      setTimeout(function () {
-        var go = function () {
-          enterRoom(door.to, from);
-          fadeEl.classList.remove("on");
-          state.transitioning = false;
-        };
-        var im = loadImg(imgDir + rooms[door.to].image);
-        if (im.complete) go(); else { im.onload = go; im.onerror = go; }
-      }, 260);
+      crossTo(door.to, function () { enterRoom(door.to, from); });
     }, wait);
   }
   // AI cats use doors on their own.
@@ -461,13 +492,14 @@
     var wasVisible = visible(cat);
     placeCat(cat, door.to, from, 0.02);
     if (visible(cat)) {
-      showWarn(cat.cfg.name + " came in!", 1.8);
+      if (!CALM) showWarn(cat.cfg.name + " came in!", 1.8);
       say(cat, cat.id === "stanley" ? "\uD83D\uDE3C" : "Mrrp!", 1.2);
       if (cat.id === "stanley" && !isPlayer(cat)) state.chaseTimer = Math.min(state.chaseTimer, rnd(2, 5));
-    } else if (wasVisible) showWarn(cat.cfg.name + " wandered off to the " + rooms[door.to].name, 2);
+    } else if (wasVisible && !CALM) showWarn(cat.cfg.name + " wandered off to the " + rooms[door.to].name, 2);
     lastBadgeKey = "";
   }
   function updateRoam(cat, dt) {
+    if (CALM && !net.on) return;          // single player: the other cat follows you instead (updateFollow)
     if (isPlayer(cat) || cat.mode !== "idle" || busy(cat) || cat.path.length) return;
     cat.roamT -= dt;
     if (cat.roamT > 0) return;
@@ -501,7 +533,11 @@
     cat.speedMul = speedMul || 1;
     cat.sit = 0;
   }
-  function say(cat, text, secs) { cat.bubble = { text: text, t: secs || 1.4, max: secs || 1.4 }; }
+  // In calm mode only event bubbles (important) show; idle chatter is dropped.
+  function say(cat, text, secs, important) {
+    if (CALM && !important) return;
+    cat.bubble = { text: text, t: secs || 1.4, max: secs || 1.4 };
+  }
 
   /* ---------- Stanley chase ---------- */
   function nextChaseDelay() {
@@ -524,7 +560,7 @@
     if (!st || !ol || busy(st) || busy(ol) || st.room !== ol.room || st.room !== state.room) return false;
     state.chases++;
     wake(st, true); wake(ol, true);
-    say(st, "Hiss!", 1.6);
+    say(st, "Hiss!", 1.6, true);
     sfx("hiss");
     st.mode = "chase"; st.path = []; st.sit = 0;
     st.chaseT = 4.5;
@@ -545,7 +581,7 @@
       st.chaseT -= dt;
       var target = [ol.x, ol.y];
       st.path = [target];
-      st.speedMul = st.cfg.chaseSpeed / st.cfg.speed;
+      st.speedMul = st.cfg.chaseSpeed / st.cfg.speed * (CALM ? 0.75 : 1);   // calm: a fair head start
       var reach = 0.05 * depthScale(st.y, R(st)) / 0.15;
       if (dist([st.x, st.y], target) < Math.max(0.035, reach)) {
         state.catches++; state.stats.caught++;
@@ -568,6 +604,7 @@
     if (st.mode !== "idle" || busy(st) || ol.mode === "flee" || busy(ol)) return;
     if (st.room !== ol.room || st.room !== state.room) return;
     if (state.snack || state.treat) return; // he's distracted
+    if (CALM) return;                       // chases are director events
     state.chaseTimer -= dt;
     if (state.chaseTimer <= 0) {
       state.chaseTimer = nextChaseDelay();
@@ -581,6 +618,59 @@
     walkTo(ol, farPointFrom([st.x, st.y], r), "walk", 1.3);
     walkTo(st, clampToFloor([st.x + (st.x > ol.x ? 0.08 : -0.08), st.y + 0.02], r.floor), "walk");
     state.chaseTimer = nextChaseDelay();
+  }
+
+  /* ---------- v4 event director: one thing at a time, calm gaps ---------- */
+  var director = { gap: C.events.first, last: null };
+  function eventActive() {
+    var st = cats.stanley;
+    return state.critters.some(function (k) { return !k.caught; }) || !!state.snack || !!(st && (st.mode === "chase" || st.mode === "scuffle"));
+  }
+  function updateDirector(dt) {
+    if (!CALM || houseActive() || state.transitioning) return;
+    if (eventActive()) { director.gap = rnd(C.events.gap[0], C.events.gap[1]); return; }
+    director.gap -= dt;
+    if (director.gap > 0) return;
+    director.gap = 3;   // nothing fit right now: try again shortly
+    var r = room(), st = cats.stanley, ol = cats.ollie, W = C.events.weights, opts = [];
+    if (params.get("nocritters") !== "1") opts.push(["critter", W.critter]);
+    if (params.get("nosnacks") !== "1" && r.surfaces && r.surfaces.length && catsIn(state.room).length) opts.push(["snack", W.snack]);
+    if (params.get("nochase") !== "1" && st && ol && st.room === state.room && ol.room === state.room && !isPlayer(st) && !busy(st) && !busy(ol) && st.mode !== "nap" && hdist([st.x, st.y], [ol.x, ol.y]) > 0.3) opts.push(["chase", W.chase]);
+    // don't repeat the same kind twice in a row if there's a choice
+    if (opts.length > 1) opts = opts.filter(function (o) { return o[0] !== director.last; });
+    if (!opts.length) return;
+    var tot = opts.reduce(function (a, o) { return a + o[1]; }, 0), x = Math.random() * tot, kind = opts[0][0];
+    for (var i = 0; i < opts.length; i++) { x -= opts[i][1]; if (x <= 0) { kind = opts[i][0]; break; } }
+    var ok = kind === "critter" ? !!spawnCritter(null, state.room) : kind === "snack" ? !!spawnSnack(state.room) : startChase();
+    if (ok) director.last = kind;
+  }
+  // Single player: the other cat follows you between rooms and stays loosely nearby.
+  function updateFollow(dt) {
+    if (!CALM || net.on || state.houseMode) return;
+    var me = cats[state.selected], o = cats[other(state.selected)];
+    if (!me || !o || !me.room) return;
+    if (o.room !== me.room) {
+      if (state.transitioning || o.air) return;
+      if (o.followT == null) o.followT = rnd(C.follow.delay[0], C.follow.delay[1]);
+      o.followT -= dt;
+      if (o.followT > 0) return;
+      o.followT = null;
+      var from = o.room;
+      if (!doorBetween(me.room, from)) { var hop1 = nextHop(me.room, from); from = hop1 || from; }
+      placeCat(o, me.room, from, 0.03);
+      lastBadgeKey = "";
+      return;
+    }
+    o.followT = null;
+    if (o.mode !== "idle" || busy(o) || o.path.length || me.air || me.perch) return;
+    if (hdist([o.x, o.y], [me.x, me.y]) < C.follow.near) { o.nearT = null; return; }
+    if (o.nearT == null) o.nearT = rnd(1.5, 4);
+    o.nearT -= dt;
+    if (o.nearT > 0) return;
+    o.nearT = null;
+    var side = o.x < me.x ? -1 : 1, keep = o.idleTotal;
+    walkTo(o, clampToFloor([me.x + side * rnd(0.08, 0.14), me.y + rnd(-0.03, 0.03)], R(o).floor));
+    o.idleTotal = keep;
   }
 
   /* ---------- critters ---------- */
@@ -630,7 +720,7 @@
   }
   function updateCritters(dt) {
     var CC = C.critters;
-    state.critterTimer -= dt;
+    if (!CALM) state.critterTimer -= dt;
     if (state.critterTimer <= 0) {
       state.critterTimer = DEBUG ? rnd(CC.debugSpawnMin, CC.debugSpawnMax) : rnd(CC.spawnMin, CC.spawnMax);
       if (state.critters.length < 2) spawnCritter();
@@ -780,7 +870,7 @@
   function updateSnack(dt) {
     var S = C.snacks;
     if (!state.snack) {
-      state.snackTimer -= dt;
+      if (!CALM) state.snackTimer -= dt;
       if (state.snackTimer <= 0) {
         state.snackTimer = DEBUG ? rnd(S.debugSpawnMin, S.debugSpawnMax) : rnd(S.spawnMin, S.spawnMax);
         spawnSnack();
@@ -801,7 +891,7 @@
           thief.snackGoal = sn;
           if (sn.room === state.room) showWarn(thief.cfg.name + " eyes the " + sn.item.name + "\u2026 tap it to put it away!", 3);
           else showWarn(thief.cfg.name + " eyes the " + sn.item.name + " in the " + rooms[sn.room].name + "!", 3);
-          say(thief, "\uD83D\uDC40", 1.5);
+          say(thief, "\uD83D\uDC40", 1.5, true);
         } else sn.warnAt = sn.t + 1.5;
       }
     } else if (sn.state === "targeted") {
@@ -1039,7 +1129,7 @@
   }
   // Idle AI cats sometimes go play with something.
   function aiPickObject(cat) {
-    var opts = objects.filter(function (o) { return canUse(cat, o) && !(o.type === "sun" && cats[other(cat.id)] && cats[other(cat.id)].sunny === o); });
+    var opts = objects.filter(function (o) { return canUse(cat, o) && !(CALM && (o.type === "cup" || o.type === "couch")) && !(o.type === "sun" && cats[other(cat.id)] && cats[other(cat.id)].sunny === o); });
     if (!opts.length) return false;
     var w = opts.map(function (o) {
       if (cat.id === "stanley") return { cup: 3, couch: 3, tree: 1, toy: 1, sun: 1, seat: 2, rug: 1 }[o.type];
@@ -1247,7 +1337,7 @@
   function onPointer(e) {
     e.preventDefault();
     unlockAudio();
-    closeAudioPanel();
+    if (closeAudioPanel()) return;
     if (state.transitioning || state.paused) return;
     var rect = canvas.getBoundingClientRect();
     var sx = e.clientX - rect.left, sy = e.clientY - rect.top;
@@ -1286,6 +1376,10 @@
     // tapping the floor right under a tree/couch rect should still walk there
     if (obj && obj.rect && obj.type !== "rug" && inPoly(p, room().floor) && p[1] > obj.rect[3] - 0.04) obj = null;
     if (obj && cat.perch && cat.perch.obj === obj && obj.type !== "seat") return;
+    if (!obj && !cat.perch) {
+      var dr = (room().doors || []).filter(function (d) { return hdist(p, d.floor) < 0.05 || hdist(p, [d.x, d.y]) < 0.05; })[0];
+      if (dr) { state.ripples.push({ x: t[0], y: t[1], t: 0 }); doorTap(dr); return; }
+    }
     if (obj) {
       act(me, { k: "obj", id: obj.id, p: p });
       state.ripples.push({ x: obj.x != null ? obj.x : t[0], y: obj.type === "tree" ? obj.from[1] : (obj.y != null ? obj.y : t[1]), t: 0 });
@@ -1400,17 +1494,14 @@
   }
 
   /* ---------- sound (all synthesized; see audio.js) ---------- */
-  var audioPrefs = store.get("audio", { music: true, fx: true, mv: C.audio.music, fv: C.audio.effects });
-  var audioPanel = $("audio-panel");
+  // v4: new prefs key; music (Nehas's song) ON by default but soft, remembered once changed
+  var audioPrefs = store.get("audio4", { music: true, fx: true, mv: C.audio.music, fv: C.audio.effects });
   function applyAudio() {
     CatAudio.setMusic(audioPrefs.music, audioPrefs.mv);
     CatAudio.setFx(audioPrefs.fx, audioPrefs.fv);
-    var any = audioPrefs.music || audioPrefs.fx;
-    soundBtn.textContent = any ? "\uD83D\uDD0A" : "\uD83D\uDD07";
-    soundBtn.setAttribute("aria-label", any ? "Sound settings (on)" : "Sound settings (off)");
     $("aud-music").checked = audioPrefs.music; $("aud-fx").checked = audioPrefs.fx;
     $("aud-music-vol").value = Math.round(audioPrefs.mv * 100); $("aud-fx-vol").value = Math.round(audioPrefs.fv * 100);
-    store.set("audio", audioPrefs);
+    store.set("audio4", audioPrefs);
   }
   var audioUnlocked = false;
   function unlockAudio() {
@@ -1418,14 +1509,30 @@
     if (!audioUnlocked && (audioPrefs.music || audioPrefs.fx)) { audioUnlocked = true; applyAudio(); }
   }
   function sfx(name) { CatAudio.sfx(name === "meow" ? "boop" : name); if (name === "meow") CatAudio.cat("ollie", "meow"); }
-  function closeAudioPanel() { if (audioPanel && !audioPanel.hidden) audioPanel.hidden = true; }
-  soundBtn.addEventListener("click", function (e) {
-    e.stopPropagation();
-    audioPanel.hidden = !audioPanel.hidden;
-    unlockAudio();
-  });
-  audioPanel.addEventListener("click", function (e) { e.stopPropagation(); });
-  audioPanel.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
+  /* ---------- the one menu (top-right): sound, mode, multiplayer, House, help ---------- */
+  var menuEl = $("menu"), menuBtn = $("menu-btn"), menuPaused = false;
+  function anyOverlay() { return !helpEl.hidden || !summaryEl.hidden || !$("net").hidden; }
+  function openMenu(on) {
+    menuEl.hidden = !on;
+    menuBtn.classList.toggle("open", on);
+    menuBtn.setAttribute("aria-expanded", on ? "true" : "false");
+    if (on) {
+      $("m-free").classList.toggle("on", !state.round); $("m-round").classList.toggle("on", !!state.round);
+      $("m-cats").hidden = !(state.role === "house" || net.on);
+      $("m-cats").textContent = net.on ? "\uD83D\uDC3E Leave the multi-phone game" : "\uD83D\uDC3E Back to the cats";
+      $("m-house").hidden = state.role === "house" || net.on;
+      $("m-net").hidden = net.on;
+      $("m-round").disabled = net.role === "client";
+      if (!net.on && !state.paused) { state.paused = true; menuPaused = true; }
+    } else if (menuPaused) {
+      menuPaused = false;
+      if (!anyOverlay()) { state.paused = false; last = performance.now(); }
+    }
+  }
+  function closeAudioPanel() { if (!menuEl.hidden) { openMenu(false); return true; } return false; }
+  menuBtn.addEventListener("click", function (e) { e.stopPropagation(); unlockAudio(); openMenu(menuEl.hidden); });
+  menuEl.addEventListener("click", function (e) { e.stopPropagation(); });
+  menuEl.addEventListener("pointerdown", function (e) { e.stopPropagation(); });
   $("aud-music").addEventListener("change", function () { audioPrefs.music = this.checked; unlockAudio(); applyAudio(); });
   $("aud-fx").addEventListener("change", function () { audioPrefs.fx = this.checked; unlockAudio(); applyAudio(); if (this.checked) CatAudio.cat(state.selected); });
   $("aud-music-vol").addEventListener("input", function () { audioPrefs.mv = this.value / 100; if (audioPrefs.mv > 0) audioPrefs.music = true; applyAudio(); });
@@ -1450,7 +1557,8 @@
     if (c && c.room && c.room !== state.room) fadeToView(c.room);
   }
   var cam = { x: 0.5, y: 0.5 };
-  function camZoom() { return params.get("nopan") === "1" ? 1 : C.camera.zoom; }
+  // v4: whole room visible, no panning, unless ?pan=1
+  function camZoom() { return params.get("pan") === "1" ? C.camera.zoom : 1; }
   function camTarget() {
     if (state.role === "house") return [0.5, 0.5];
     var c = cats[state.selected];
@@ -1628,10 +1736,16 @@
     $("house-pill").hidden = !houseActive() && state.role !== "house";
     $("map-btn").hidden = state.role !== "house";
     mapEl.hidden = state.role !== "house";
-    treatBtn.hidden = state.role === "house";
+    treatBtn.hidden = true;   // v4: no treat button in normal play (the House has treats)
     if (state.role === "house") { setHouseTool(null); lastHouseKey = ""; updateMap(true); }
     else selectCat(role, true);
     lastBadgeKey = "";
+  }
+  function stopHouseMode() {
+    state.houseMode = false;
+    setMyRole(state.selected);
+    netStatus();
+    showToast("Back to " + cats[state.selected].cfg.name);
   }
   function startHouseMode() {
     state.houseMode = true;
@@ -1937,9 +2051,14 @@
   Array.prototype.forEach.call(document.querySelectorAll("#net-roles button"), function (b) {
     b.addEventListener("click", function () { netRole = b.dataset.role; Array.prototype.forEach.call(document.querySelectorAll("#net-roles button"), function (x) { x.classList.toggle("on", x === b); }); });
   });
-  $("btn-net").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); helpEl.hidden = true; $("net").hidden = false; netMsg(""); });
-  $("btn-house").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startHouseMode(); });
-  $("net-back").addEventListener("click", function () { $("net").hidden = true; if (!net.on) showHelp(); });
+  $("m-net").addEventListener("click", function () { openMenu(false); unlockAudio(); $("net").hidden = false; state.paused = !net.on; netMsg(""); });
+  $("m-house").addEventListener("click", function () { openMenu(false); unlockAudio(); startHouseMode(); });
+  $("m-cats").addEventListener("click", function () {
+    openMenu(false);
+    if (net.on) { goSolo(); if (state.role === "house") stopHouseMode(); return; }
+    stopHouseMode();
+  });
+  $("net-back").addEventListener("click", function () { $("net").hidden = true; if (!anyOverlay()) { state.paused = false; last = performance.now(); } });
   $("net-host").addEventListener("click", function () {
     unlockAudio(); netMsg("Starting\u2026");
     hostGame(netRole, function (err, code) {
@@ -1987,9 +2106,10 @@
   }
   function hideOverlays() { helpEl.hidden = true; summaryEl.hidden = true; state.paused = false; last = performance.now(); }
   function showHelp() { helpEl.hidden = false; state.paused = true; }
-  $("help-btn").addEventListener("click", function (e) { e.stopPropagation(); showHelp(); });
-  $("btn-free").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startFree(); });
-  $("btn-round").addEventListener("click", function () { store.set("seenHelp", 1); unlockAudio(); startRound(); });
+  $("m-help").addEventListener("click", function () { openMenu(false); showHelp(); });
+  $("btn-play").addEventListener("click", function () { store.set("seenIntro4", 1); unlockAudio(); hideOverlays(); });
+  $("m-free").addEventListener("click", function () { openMenu(false); if (state.round) startFree(); });
+  $("m-round").addEventListener("click", function () { openMenu(false); unlockAudio(); startRound(); });
   $("btn-again").addEventListener("click", function () { if (net.role === "client") { hideOverlays(); return; } startRound(); });
   $("btn-free2").addEventListener("click", function () { startFree(); });
   function updateRound(dt) {
@@ -2121,10 +2241,12 @@
     var t = performance.now() / 1000;
     ctx.save();
     ctx.fillStyle = "#e8f0ff"; ctx.strokeStyle = "rgba(20,30,60,.8)"; ctx.lineWidth = 3;
+    var calmA = CALM ? 0.55 : 1, calmS = CALM ? 0.6 : 1;
+    ctx.lineWidth = CALM ? 2 : 3;
     for (var i = 0; i < 3; i++) {
-      var k = (t * 0.5 + i / 3) % 1;
-      var fs = 12 + 10 * k;
-      ctx.globalAlpha = 1 - k;
+      var k = (t * 0.4 + i / 3) % 1;
+      var fs = (12 + 10 * k) * calmS;
+      ctx.globalAlpha = (1 - k) * calmA;
       ctx.font = "bold " + fs + "px 'Trebuchet MS', sans-serif";
       ctx.strokeText("z", x + k * 18, y - k * 40);
       ctx.fillText("z", x + k * 18, y - k * 40);
@@ -2320,14 +2442,14 @@
     state.popups = state.popups.filter(function (q) { q.t += dt; return q.t < 1.3; });
     state.popups.forEach(function (q) {
       var p = toScreen([q.x, q.y]);
-      var fs = Math.max(16, Math.min(28, view.ih * 0.06));
+      var fs = CALM ? Math.max(13, Math.min(18, view.ih * 0.04)) : Math.max(16, Math.min(28, view.ih * 0.06));
       ctx.save();
       ctx.globalAlpha = Math.min(1, 2.2 - q.t * 1.7);
       ctx.font = "900 " + fs + "px 'Trebuchet MS', system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,.7)";
       ctx.fillStyle = q.good ? "#7dff8a" : "#ff6b6b";
-      var y = p[1] - q.t * 50;
+      var y = p[1] - q.t * (CALM ? 30 : 50);
       ctx.strokeText(q.text, p[0], y); ctx.fillText(q.text, p[0], y);
       ctx.restore();
     });
@@ -2360,7 +2482,7 @@
         ctx.restore();
         // tiny sun marker so kids know it's special
         var occupied = catsIn(o.room).some(function (c) { return c.sunny === o; });
-        if (!occupied) {
+        if (!occupied && !CALM) {
           ctx.save(); ctx.globalAlpha = 0.85; ctx.font = Math.max(14, ry * 0.9) + "px sans-serif"; ctx.textAlign = "center";
           ctx.fillText("\u2600\uFE0F", p[0], p[1] - ry * 0.2 + Math.sin(t * 2) * 2); ctx.restore();
         }
@@ -2496,6 +2618,8 @@
         if (net.on) hostBroadcast(dt);
         updateRound(dt);
         updateAI(dt);
+        updateDirector(dt);
+        updateFollow(dt);
         updateCritters(dt);
         updateSnack(dt);
         updateTreat(dt);
@@ -2514,7 +2638,7 @@
       if (DEBUG) drawDebug();
       drawRipples(dt);
       drawFloorObjects();
-      drawHints();
+      if (!CALM || params.get("hints") === "1") drawHints();
       if (state.snack && state.snack.room === state.room) drawSnack(state.snack);
       if (state.treat && state.treat.room === state.room) drawTreat(state.treat);
       // depth-sort cats + critters (a cat on a counter sorts by the floor spot it jumped from)
@@ -2535,6 +2659,7 @@
       drawPoofs(dt);
       catIds.forEach(function (id) { if (visible(cats[id])) drawBubble(cats[id]); });
       drawPopups(dt);
+      drawXfade(rdt);
     } catch (err) {
       state.errors.push(String(err));
       if (state.errors.length < 3) console.error(err);
@@ -2600,7 +2725,7 @@
   if (params.get("house") === "1") setTimeout(startHouseMode, 50);
   if (params.get("host")) setTimeout(function () { hostGame(params.get("host"), function (err, code) { window.__netResult = err || ("host:" + code); if (!err) showToast("Code " + code); }, params.get("code")); }, 300);
   if (params.get("join")) setTimeout(function () { joinGame(params.get("join"), params.get("role") || "stanley", function (err) { window.__netResult = err || ("joined:" + net.myRole); }); }, 300);
-  var seen = store.get("seenHelp", 0);
+  var seen = store.get("seenIntro4", 0);
   if (params.get("round") === "1") startRound();
   else if (params.get("nohelp") === "1" || seen) hideOverlays();
   else showHelp();

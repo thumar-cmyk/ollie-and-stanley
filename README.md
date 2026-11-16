@@ -1,4 +1,4 @@
-# Ollie & Stanley (v3)
+# Ollie & Stanley (v4)
 
 A tap-to-walk web game set in the family's real downstairs, starring cat brothers
 Ollie and Stanley. Plain HTML/CSS/JS: no build step and no CDNs. It works offline
@@ -7,11 +7,31 @@ Chrome: menu > Add to Home screen / Install app).
 
 ## Play
 * Turn the phone sideways (portrait shows a "turn your phone" screen).
-* Tap a face (bottom-left), or tap a cat, to choose who you control.
-* Tap the floor and your cat walks there. Taps on furniture or walls snap to the nearest floor spot.
-* Orange arrow buttons go to the next room; both cats come along.
-* When you're not controlling Stanley, he sometimes hisses and chases Ollie. Ollie runs away, and if Stanley catches him there's a quick scuffle.
-* Speaker button (top-right) turns the synthesized sound effects on. Sound starts off.
+* Tap a spot and your cat walks there. Tap furniture and toys to play with them.
+* Catch bugs and mice, and tap food on the counter before Stanley steals it.
+* The two faces (bottom-left) switch between Ollie and Stanley. The other cat follows you around.
+* Small arrows near the doorways lead to the next room. Tapping the floor right at a doorway works too.
+* Everything else is in the menu (top-right): cat sounds and soft music, Free play or a 3-minute round,
+  "Be the House", "Play with 2-3 phones" and How to play.
+
+## v4: calm by default
+
+Nehas found v3 too busy, so v4 keeps all the features but shows one thing at a time:
+* **Clean screen:** just the room, the cats, two small faces, a small score chip and one menu button.
+  "Best" only shows on the round summary. No treat, help or speaker buttons on the main screen.
+* **Doors:** small translucent chevrons, no pulsing. The room name shows while you press one and when you enter.
+* **One event at a time:** an event director picks a critter, a snack on the counter, or a Stanley
+  chase, always in the room you're looking at. It waits ~20 s at the start and 20-40 s between events
+  (`events` in `js/config.js`). Chases only start when the cats are a little apart, and Stanley is a bit slower.
+* **Fewer bubbles:** only "Hiss!" (chase) and the thief's eyes (snack) show. Nap points just tick the score,
+  with no "zzz" popups and smaller, fainter z's. No sparkle hints. A tapped object gets a small ripple.
+* **The other cat follows you** from room to room (1-2 s later) and stays loosely nearby. No roaming in single player.
+  The AI cat never knocks cups or scratches the couch on its own.
+* **Smooth:** the whole room is always visible (no camera pan) and rooms change with a quick 0.3 s crossfade
+  and a slight push toward the door.
+* **Sound:** music is off by default (Soft music in the menu), and cat sounds are quieter.
+* `?busy=1` brings back the v3 behaviour (roaming, independent timers, all bubbles), `?pan=1` the camera pan,
+  `?dolly=1` the doorway zoom, `?hints=1` the sparkles and the "upstairs" hint. `?gap=N` sets the event gaps (testing).
 
 ## v3 (part A)
 

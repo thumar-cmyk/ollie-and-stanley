@@ -85,8 +85,16 @@ window.GAME_CONFIG = {
     stanleySeeksOllie: 0.6,  // chance Stanley heads toward Ollie's room
     wander: 0.25             // chance of wandering to a random next room
   },
-  aiObjectChance: 0.25,      // idle AI cat picks an object to play with
-  camera: { zoom: 1.15, follow: 2.5 },  // room drawn a bit larger than the screen; pans to keep your cat centered
+  aiObjectChance: 0.08,      // idle AI cat picks an object to play with (v4: rarely, and never cups/couch on its own)
+  camera: { zoom: 1.15, follow: 2.5 },  // only with ?pan=1 (v4 default: whole room visible, no panning)
+  /* v4 "calm" defaults: one thing at a time */
+  events: {
+    first: 20,               // nothing happens for the first ~20 s
+    gap: [20, 40],           // calm seconds between events
+    weights: { critter: 5, snack: 3, chase: 2 }
+  },
+  follow: { delay: [1.2, 2.4], near: 0.32 },  // the other cat follows you into rooms, and stays loosely nearby
+  transition: { ms: 300, push: 1.05 },         // quick crossfade between rooms, with a slight push
   /* House player (game master): tools with cooldowns (cd, seconds) or charges that recharge */
   house: {
     tools: {
@@ -98,7 +106,7 @@ window.GAME_CONFIG = {
     },
     points: { treat: 3, critterFast: 10, snack: 5, toy: 1 }   // critter: 10 if caught at once, -1 per 3 s (min 2)
   },
-  audio: { music: 0.35, effects: 0.8 },
+  audio: { music: 0.3, effects: 0.5 },   // v4: music off by default (menu), cat sounds quieter
   nap: { after: 18, sunAfter: 1.5 },  // idle seconds before a cat curls up (sun spots: almost right away)
   round: { seconds: 180 },
 
